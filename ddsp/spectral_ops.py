@@ -315,7 +315,7 @@ def compute_loudness(audio,
   power = power * weighting
 
   # Average over frequencies (weighted power per a bin).
-  avg_power = reduce_mean(power, axis=-1)
+  avg_power = reduce_mean(power, axis=-1).astype(lib.float32)
   loudness = core.power_to_db(avg_power,
                               ref_db=ref_db,
                               range_db=range_db,
