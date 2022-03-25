@@ -155,7 +155,7 @@ def parse_gin(restore_dir):
     # User gin config and user hyperparameters from flags.
     gin_file = cloud.make_file_paths_local(FLAGS.gin_file, GIN_PATH)
     gin.parse_config_files_and_bindings(
-        gin_file, FLAGS.gin_param, skip_unknown=True)
+      gin_file, FLAGS.gin_param, skip_unknown=True)
 
 
 def allow_memory_growth():
@@ -188,6 +188,12 @@ def main(unused_argv):
   if FLAGS.allow_memory_growth:
     allow_memory_growth()
 
+  gpus = tf.config.list_physical_devices('GPU')
+  if not gpus:
+    print("WARNING: no GPUs detected by TensorFlow!")
+  else:
+    print(f"Found GPU(s): {gpus}")
+
   # Training.
   if FLAGS.mode == 'train':
     strategy = train_util.get_strategy(tpu=FLAGS.tpu,
@@ -201,7 +207,8 @@ def main(unused_argv):
                      save_dir=save_dir,
                      restore_dir=restore_dir,
                      early_stop_loss_value=FLAGS.early_stop_loss_value,
-                     report_loss_to_hypertune=FLAGS.hypertune)
+                     report_loss_to_hypertune=FLAGS.hypertune,
+                     flag_values_dict=FLAGS.flag_values_dict())
 
   # Evaluation.
   elif FLAGS.mode == 'eval':

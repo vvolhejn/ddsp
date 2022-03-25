@@ -29,7 +29,7 @@ class Trainer(object):
 
   def __init__(self,
                model,
-               strategy,
+               strategy: tf.distribute.Strategy,
                checkpoints_to_keep=100,
                learning_rate=0.001,
                lr_decay_steps=10000,
@@ -155,21 +155,23 @@ class Trainer(object):
     """Distributed training step."""
     # Wrap iterator in tf.function, slight speedup passing in iter vs batch.
     batch = next(inputs) if hasattr(inputs, '__next__') else inputs
-    losses = self.run(self.step_fn, batch)
+    outputs, losses = self.run(self.step_fn, batch)
     # Add up the scalar losses across replicas.
     n_replicas = self.strategy.num_replicas_in_sync
-    return {k: self.psum(v, axis=None) / n_replicas for k, v in losses.items()}
+    losses_total = {k: self.psum(v, axis=None) / n_replicas for k, v in losses.items()}
+
+    return outputs, losses_total
 
   @tf.function
   def step_fn(self, batch):
     """Per-Replica training step."""
     with tf.GradientTape() as tape:
-      _, losses = self.model(batch, return_losses=True, training=True)
+      outputs, losses = self.model(batch, return_losses=True, training=True)
     # Clip and apply gradients.
     grads = tape.gradient(losses['total_loss'], self.model.trainable_variables)
     grads, _ = tf.clip_by_global_norm(grads, self.grad_clip_norm)
     self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-    return losses
+    return outputs, losses
 
 
 @gin.configurable

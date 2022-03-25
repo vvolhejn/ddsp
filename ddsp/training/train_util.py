@@ -21,14 +21,17 @@ import os
 import time
 
 from absl import logging
-from ddsp.training import cloud
+import rich.pretty
+
+from ddsp.training.trainers import Trainer
+from ddsp.training import cloud, summaries
 import gin
 import tensorflow.compat.v2 as tf
-
+import wandb
 
 
 # ---------------------- Helper Functions --------------------------------------
-def get_strategy(tpu='', cluster_config=''):
+def get_strategy(tpu="", cluster_config=""):
   """Create a distribution strategy for running on accelerators.
 
   For CPU, single-GPU, or multi-GPU jobs on a single machine, call this function
@@ -57,25 +60,27 @@ def get_strategy(tpu='', cluster_config=''):
     specified.
   """
   if tpu:
-    logging.info('Use TPU at %s', tpu)
+    logging.info("Use TPU at %s", tpu)
     resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=tpu)
     tf.config.experimental_connect_to_cluster(resolver)
     tf.tpu.experimental.initialize_tpu_system(resolver)
     strategy = tf.distribute.TPUStrategy(resolver)
-  elif  cluster_config:
+  elif cluster_config:
     if not isinstance(cluster_config, dict):
       cluster_config = json.loads(cluster_config)
-    cluster_spec = tf.train.ClusterSpec(cluster_config['cluster'])
+    cluster_spec = tf.train.ClusterSpec(cluster_config["cluster"])
     resolver = tf.distribute.cluster_resolver.SimpleClusterResolver(
-        cluster_spec=cluster_spec,
-        task_type=cluster_config['task']['type'],
-        task_id=cluster_config['task']['index'],
-        num_accelerators={'GPU': len(tf.config.list_physical_devices('GPU'))},
-        rpc_layer='grpc')
+      cluster_spec=cluster_spec,
+      task_type=cluster_config["task"]["type"],
+      task_id=cluster_config["task"]["index"],
+      num_accelerators={"GPU": len(tf.config.list_physical_devices("GPU"))},
+      rpc_layer="grpc",
+    )
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy(
-        cluster_resolver=resolver)
+      cluster_resolver=resolver
+    )
   else:
-    logging.info('Defaulting to MirroredStrategy')
+    logging.info("Defaulting to MirroredStrategy")
     strategy = tf.distribute.MirroredStrategy()
   return strategy
 
@@ -84,7 +89,7 @@ def expand_path(file_path):
   return os.path.expanduser(os.path.expandvars(file_path))
 
 
-def get_latest_file(dir_path, prefix='operative_config-', suffix='.gin'):
+def get_latest_file(dir_path, prefix="operative_config-", suffix=".gin"):
   """Returns latest file with pattern '/dir_path/prefix[iteration]suffix'.
 
   Args:
@@ -101,11 +106,12 @@ def get_latest_file(dir_path, prefix='operative_config-', suffix='.gin'):
   """
   dir_path = expand_path(dir_path)
   dir_prefix = os.path.join(dir_path, prefix)
-  search_pattern = dir_prefix + '*' + suffix
+  search_pattern = dir_prefix + "*" + suffix
   file_paths = tf.io.gfile.glob(search_pattern)
   if not file_paths:
     raise FileNotFoundError(
-        f'No files found matching the pattern \'{search_pattern}\'.')
+      f"No files found matching the pattern '{search_pattern}'."
+    )
   try:
     # Filter to get highest iteration, no negative iterations.
     get_iter = lambda fp: abs(int(fp.split(dir_prefix)[-1].split(suffix)[0]))
@@ -113,9 +119,10 @@ def get_latest_file(dir_path, prefix='operative_config-', suffix='.gin'):
     return latest_file
   except ValueError as verror:
     raise FileNotFoundError(
-        f'Files found with pattern \'{search_pattern}\' do not match '
-        f'the pattern \'{dir_prefix}[iteration_number]{suffix}\'.\n\n'
-        f'Files found:\n{file_paths}') from verror
+      f"Files found with pattern '{search_pattern}' do not match "
+      f"the pattern '{dir_prefix}[iteration_number]{suffix}'.\n\n"
+      f"Files found:\n{file_paths}"
+    ) from verror
 
 
 def get_latest_checkpoint(checkpoint_path):
@@ -132,7 +139,7 @@ def get_latest_checkpoint(checkpoint_path):
     FileNotFoundError: If no checkpoint is found.
   """
   checkpoint_path = expand_path(checkpoint_path)
-  is_checkpoint = tf.io.gfile.exists(checkpoint_path + '.index')
+  is_checkpoint = tf.io.gfile.exists(checkpoint_path + ".index")
   if is_checkpoint:
     # Return the path if it points to a checkpoint.
     return checkpoint_path
@@ -144,8 +151,8 @@ def get_latest_checkpoint(checkpoint_path):
       return ckpt
     else:
       # Last resort, look for '/path/ckpt-[iter].index' files.
-      ckpt_f = get_latest_file(checkpoint_path, prefix='ckpt-', suffix='.index')
-      return ckpt_f.split('.index')[0]
+      ckpt_f = get_latest_file(checkpoint_path, prefix="ckpt-", suffix=".index")
+      return ckpt_f.split(".index")[0]
 
 
 # ---------------------------------- Gin ---------------------------------------
@@ -163,35 +170,35 @@ def get_latest_operative_config(restore_dir):
     FileNotFoundError: If no config is found.
   """
   try:
-    return get_latest_file(
-        restore_dir, prefix='operative_config-', suffix='.gin')
+    return get_latest_file(restore_dir, prefix="operative_config-", suffix=".gin")
   except FileNotFoundError:
     return get_latest_file(
-        os.path.dirname(restore_dir), prefix='operative_config-', suffix='.gin')
+      os.path.dirname(restore_dir), prefix="operative_config-", suffix=".gin"
+    )
 
 
 def write_gin_config(summary_writer, save_dir, step):
-  """"Writes gin operative_config to save_dir and tensorboard."""
+  """ "Writes gin operative_config to save_dir and tensorboard."""
   config_str = gin.operative_config_str()
 
   # Save the original config string to a file.
-  base_name = 'operative_config-{}'.format(step)
-  fname = os.path.join(save_dir, base_name + '.gin')
-  with tf.io.gfile.GFile(fname, 'w') as f:
+  base_name = "operative_config-{}".format(step)
+  fname = os.path.join(save_dir, base_name + ".gin")
+  with tf.io.gfile.GFile(fname, "w") as f:
     f.write(config_str)
 
   # Formatting hack copied from gin.tf.GinConfigSaverHook.
   def format_for_tensorboard(line):
     """Convert a single line to markdown format."""
-    if not line.startswith('#'):
-      return '    ' + line
+    if not line.startswith("#"):
+      return "    " + line
     line = line[2:]
-    if line.startswith('===='):
-      return ''
-    if line.startswith('None'):
-      return '    # None.'
-    if line.endswith(':'):
-      return '#### ' + line
+    if line.startswith("===="):
+      return ""
+    if line.startswith("None"):
+      return "    # None."
+    if line.endswith(":"):
+      return "#### " + line
     return line
 
   # Convert config string to markdown.
@@ -200,39 +207,61 @@ def write_gin_config(summary_writer, save_dir, step):
     md_line = format_for_tensorboard(line)
     if md_line is not None:
       md_lines.append(md_line)
-  md_config_str = '\n'.join(md_lines)
+  md_config_str = "\n".join(md_lines)
 
   # Add to tensorboard.
   with summary_writer.as_default():
     text_tensor = tf.convert_to_tensor(md_config_str)
-    tf.summary.text(name='gin/' + base_name, data=text_tensor, step=step)
+    tf.summary.text(name="gin/" + base_name, data=text_tensor, step=step)
     summary_writer.flush()
 
 
 def gin_register_keras_layers():
   """Registers all keras layers and Sequential to be referenceable in gin."""
   # Register sequential model.
-  gin.external_configurable(tf.keras.Sequential, 'tf.keras.Sequential')
+  gin.external_configurable(tf.keras.Sequential, "tf.keras.Sequential")
 
   # Register all the layers.
   for k, v in inspect.getmembers(tf.keras.layers):
     # Duck typing for tf.keras.layers.Layer since keras uses metaclasses.
-    if hasattr(v, 'variables'):
-      gin.external_configurable(v, f'tf.keras.layers.{k}')
+    if hasattr(v, "variables"):
+      gin.external_configurable(v, f"tf.keras.layers.{k}")
+
+
+def summarize_tensors(x):
+  """
+  Takes a structure (list, tuple, dict) where some of the values are tensors
+  and replaces these tensor by (shape, dtype) tuples. Does this recursively.
+  """
+  if isinstance(x, tf.Tensor):
+    return (x.shape, x.dtype)
+  elif isinstance(x, list):
+    return [summarize_tensors(e) for e in x]
+  elif isinstance(x, tuple):
+    return tuple(summarize_tensors(e) for e in x)
+  elif isinstance(x, dict):
+    return dict((k, summarize_tensors(v)) for (k, v) in x.items())
+  else:
+    # Any other type (str, int, objects...)
+    return x
 
 
 # ------------------------ Training Loop ---------------------------------------
 @gin.configurable
-def train(data_provider,
-          trainer,
-          batch_size=32,
-          num_steps=1000000,
-          steps_per_summary=300,
-          steps_per_save=300,
-          save_dir='/tmp/ddsp',
-          restore_dir='/tmp/ddsp',
-          early_stop_loss_value=None,
-          report_loss_to_hypertune=False):
+def train(
+        data_provider,
+        trainer: Trainer,
+        batch_size=32,
+        num_steps=1000000,
+        steps_per_summary=300,
+        steps_per_save=300,
+        save_dir="/tmp/ddsp",
+        restore_dir="/tmp/ddsp",
+        early_stop_loss_value=None,
+        report_loss_to_hypertune=False,
+        model_specific_summary_fn=None,
+        flag_values_dict=None,
+):
   """Main training loop.
 
   Args:
@@ -251,6 +280,8 @@ def train(data_provider,
      value training stops. If None training will run for num_steps steps.
    report_loss_to_hypertune: Report loss values to hypertune package for
      hyperparameter tuning, such as on Google Cloud AI-Platform.
+   model_specific_summary_fn: Called during evaluation to provide additional summaries
+     specific to the model. Called as `model_specific_summary_fn(model_outputs, step)`
   """
   # Get a distributed dataset iterator.
   dataset = data_provider.get_batch(batch_size, shuffle=True, repeats=-1)
@@ -260,16 +291,26 @@ def train(data_provider,
   # Build model, easiest to just run forward pass.
   trainer.build(next(dataset_iter))
 
+  wandb_run = wandb.init(project="neural-audio-synthesis-thesis",
+                         entity="neural-audio-synthesis-thesis",
+                         name=os.path.basename(save_dir),
+                         sync_tensorboard=True,
+                         config=flag_values_dict,
+                         dir="/cluster/scratch/vvolhejn/wandb",
+                         tags=["train", ""])
+
   # Load latest checkpoint if one exists in load directory.
   try:
     trainer.restore(restore_dir)
   except FileNotFoundError:
-    logging.info('No existing checkpoint found in %s, skipping '
-                 'checkpoint loading.', restore_dir)
+    logging.info(
+      "No existing checkpoint found in %s, skipping " "checkpoint loading.",
+      restore_dir,
+    )
 
   if save_dir:
     # Set up the summary writer and metrics.
-    summary_dir = os.path.join(save_dir, 'summaries', 'train')
+    summary_dir = os.path.join(save_dir, "summaries", "train")
     summary_writer = tf.summary.create_file_writer(summary_dir)
 
     # Save the gin config.
@@ -286,46 +327,81 @@ def train(data_provider,
       step = trainer.step  # Step is not iteration if restarting a model.
 
       # Take a step.
-      losses = trainer.train_step(dataset_iter)
+      outputs, losses = trainer.train_step(dataset_iter)
+
+      if iteration == 10:
+        logging.info(rich.pretty.pretty_repr(summarize_tensors(outputs)))
 
       # Create training loss metrics when starting/restarting training.
       if iteration == 0:
         loss_names = list(losses.keys())
-        logging.info('Creating metrics for %s', loss_names)
-        avg_losses = {name: tf.keras.metrics.Mean(name=name, dtype=tf.float32)
-                      for name in loss_names}
+        logging.info("Creating metrics for %s", loss_names)
+        avg_losses = {
+          name: tf.keras.metrics.Mean(name=name, dtype=tf.float32)
+          for name in loss_names
+        }
 
       # Update metrics.
       for k, v in losses.items():
         avg_losses[k].update_state(v)
 
       # Log the step.
-      log_str = 'step: {}\t'.format(int(step.numpy()))
-      for k, v in losses.items():
-        log_str += '{}: {:.2f}\t'.format(k, v)
-      logging.info(log_str)
+      if step % steps_per_summary == 0:
+        log_str = "step: {}\t".format(int(step.numpy()))
+        for k, v in losses.items():
+          log_str += "{}: {:.2f}\t".format(k, v)
+        logging.info(log_str)
 
       # Write Summaries.
       if step % steps_per_summary == 0 and save_dir:
+
+        if "z_std_raw" in outputs:
+          tf.summary.scalar(
+            "z_std", tf.reduce_mean(outputs["z_std_raw"]), step=step
+          )
+          tf.math.softplus(outputs["z_std_raw"]) + 1e-4
+
         # Speed.
         steps_per_sec = steps_per_summary / (time.time() - tick)
-        tf.summary.scalar('steps_per_sec', steps_per_sec, step=step)
+        tf.summary.scalar("steps_per_sec", steps_per_sec, step=step)
         tick = time.time()
 
         # Metrics.
         for k, metric in avg_losses.items():
-          tf.summary.scalar('losses/{}'.format(k), metric.result(), step=step)
+          tf.summary.scalar("losses/{}".format(k), metric.result(), step=step)
           metric.reset_states()
+
+        sample_rate = 16000
+
+        # Play a part of the generated audio followed by the original sample.
+        audio_both = tf.concat(
+          [
+            outputs["audio_synth"][:1, : 2 * sample_rate],
+            outputs["audio"][:1, : 2 * sample_rate],
+          ],
+          axis=1,
+        )
+
+        summaries.audio_summary(
+          audio_both, step, sample_rate=sample_rate, name="audio_both"
+        )
+
+        if model_specific_summary_fn:
+          model_specific_summary_fn(outputs, step)
 
       # Report metrics for hyperparameter tuning if enabled.
       if report_loss_to_hypertune:
-        cloud.report_metric_to_hypertune(losses['total_loss'], step.numpy())
+        cloud.report_metric_to_hypertune(losses["total_loss"], step.numpy())
 
       # Stop the training when the loss reaches given value
-      if (early_stop_loss_value is not None and
-          losses['total_loss'] <= early_stop_loss_value):
-        logging.info('Total loss reached early stopping value of %s',
-                     early_stop_loss_value)
+      if (
+              early_stop_loss_value is not None
+              and losses["total_loss"] <= early_stop_loss_value
+      ):
+        logging.info(
+          "Total loss reached early stopping value of %s",
+          early_stop_loss_value,
+        )
 
         # Write a final checkpoint.
         if save_dir:
@@ -338,4 +414,4 @@ def train(data_provider,
         trainer.save(save_dir)
         summary_writer.flush()
 
-  logging.info('Training Finished!')
+  logging.info("Training Finished!")

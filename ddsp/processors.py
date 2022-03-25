@@ -251,6 +251,9 @@ class Crop(Processor):
     return {'audio': audio}
 
   def get_signal(self, audio: tf.Tensor) -> tf.Tensor:
+    if self.frame_size == 0:
+      return audio
+
     half_pad_amount = int(self.frame_size // 2)  # Symmetric even.
     pad_amount = 2 * half_pad_amount
     if self.crop_location == 'front':
