@@ -297,7 +297,7 @@ def train(
                          sync_tensorboard=True,
                          config=flag_values_dict,
                          dir="/cluster/scratch/vvolhejn/wandb",
-                         tags=["train", ""])
+                         tags=["train"])
 
   # Load latest checkpoint if one exists in load directory.
   try:

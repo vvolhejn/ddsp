@@ -19,6 +19,7 @@ from ddsp import core
 from ddsp.training import nn
 import gin
 import tensorflow as tf
+from codetiming import Timer
 
 tfkl = tf.keras.layers
 
@@ -89,19 +90,22 @@ class RnnFcDecoder(nn.DictLayer):
       state = inputs.pop()
 
     # Initial processing.
-    inputs = [stack(x) for stack, x in zip(self.input_stacks, inputs)]
+    with Timer("decoder.pre_stacks", logger=None):
+      inputs = [stack(x) for stack, x in zip(self.input_stacks, inputs)]
+      x = tf.concat(inputs, axis=-1)
 
     # Run an RNN over the latents.
-    x = tf.concat(inputs, axis=-1)
-    if self.stateless:
-      x, new_state = self.rnn(x, state)
-    else:
-      x = self.rnn(x)
-    x = tf.concat(inputs + [x], axis=-1)
+    with Timer("decoder.rnn", logger=None):
+      if self.stateless:
+        x, new_state = self.rnn(x, state)
+      else:
+        x = self.rnn(x)
 
     # Final processing.
-    x = self.out_stack(x)
-    x = self.dense_out(x)
+    with Timer("decoder.post_stacks", logger=None):
+      x = tf.concat(inputs + [x], axis=-1)
+      x = self.out_stack(x)
+      x = self.dense_out(x)
 
     output_dict = nn.split_to_dict(x, self.output_splits)
     if self.stateless:

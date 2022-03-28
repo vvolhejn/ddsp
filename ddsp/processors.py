@@ -27,6 +27,7 @@ from ddsp import core
 from ddsp import dags
 import gin
 import tensorflow as tf
+from codetiming import Timer
 
 tfkl = tf.keras.layers
 
@@ -61,8 +62,10 @@ class Processor(tfkl.Layer):
       if k in kwargs:
         _ = kwargs.pop(k)
 
-    controls = self.get_controls(*args, **kwargs)
-    signal = self.get_signal(**controls)
+    with Timer("processor_group." + self.name, logger=None):
+      controls = self.get_controls(*args, **kwargs)
+      signal = self.get_signal(**controls)
+
     if return_outputs_dict:
       return dict(signal=signal, controls=controls)
     else:

@@ -17,7 +17,7 @@
 
 import ddsp
 from ddsp.training.models.model import Model
-
+from codetiming import Timer
 
 class Autoencoder(Model):
   """Wrap the model function for dependency injection with gin."""
@@ -38,16 +38,25 @@ class Autoencoder(Model):
 
   def encode(self, features, training=True):
     """Get conditioning by preprocessing then encoding."""
-    if self.preprocessor is not None:
-      features.update(self.preprocessor(features, training=training))
-    if self.encoder is not None:
-      features.update(self.encoder(features))
+    with Timer("Autoencoder.preprocessor", logger=None):
+      if self.preprocessor is not None:
+        features.update(self.preprocessor(features, training=training))
+
+    with Timer("Autoencoder.encoder", logger=None):
+      if self.encoder is not None:
+        features.update(self.encoder(features))
+
     return features
 
   def decode(self, features, training=True):
     """Get generated audio by decoding than processing."""
-    features.update(self.decoder(features, training=training))
-    return self.processor_group(features)
+    with Timer("Autoencoder.decoder", logger=None):
+      features.update(self.decoder(features, training=training))
+
+    # with Timer("Autoencoder.processor_group", logger=None):
+    res = self.processor_group(features)
+
+    return res
 
   def get_audio_from_outputs(self, outputs):
     """Extract audio output tensor from outputs dict of call()."""
@@ -56,10 +65,13 @@ class Autoencoder(Model):
   def call(self, features, training=True):
     """Run the core of the network, get predictions and loss."""
     features = self.encode(features, training=training)
-    features.update(self.decoder(features, training=training))
+
+    with Timer("Autoencoder.decoder", logger=None):
+      features.update(self.decoder(features, training=training))
 
     # Run through processor group.
-    pg_out = self.processor_group(features, return_outputs_dict=True)
+    with Timer("Autoencoder.processor_group", logger=None):
+      pg_out = self.processor_group(features, return_outputs_dict=True)
 
     # Parse outputs
     outputs = pg_out['controls']

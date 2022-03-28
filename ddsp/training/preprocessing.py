@@ -19,11 +19,13 @@ import ddsp
 from ddsp.training import nn
 import gin
 import tensorflow as tf
+from tensorflow.python.ops.numpy_ops import np_config
 
 F0_RANGE = ddsp.spectral_ops.F0_RANGE
 DB_RANGE = ddsp.spectral_ops.DB_RANGE
 
 tfkl = tf.keras.layers
+np_config.enable_numpy_behavior()
 
 
 # ---------------------- Preprocess Helpers ------------------------------------
