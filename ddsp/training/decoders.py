@@ -286,7 +286,10 @@ class DilatedConvDecoder(nn.OutputSplitsLayer):
       return tf.concat(inputs, axis=-1)
 
   def compute_output(self, *inputs):
-    stack_inputs = self._parse_inputs(inputs)
-    return self.dilated_conv_stack(stack_inputs)
+    with Timer("decoder.pre_stacks", logger=None):
+      stack_inputs = self._parse_inputs(inputs)
+
+    with Timer("decoder.dilated_cnn", logger=None):
+      return self.dilated_conv_stack(stack_inputs)
 
 

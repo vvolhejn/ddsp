@@ -17,6 +17,8 @@
 
 import inspect
 
+from codetiming import Timer
+
 from ddsp import core
 from ddsp import losses
 import gin
@@ -1170,25 +1172,25 @@ class DilatedConvStack(tfkl.Layer):
 
     # Stacks.
     for i, (layer, norm) in enumerate(zip(self.layers, self.norms)):
+      with Timer(f"dilated_cnn.layer_{i+1}", logger=None):
+        # Optional: Resample before conv.
+        if (self.resample_layers and not self.resample_after_convolve and
+            i  % self.layers_per_resample == 0):
+          x = self.resample_layers[i // self.layers_per_resample](x)
 
-      # Optional: Resample before conv.
-      if (self.resample_layers and not self.resample_after_convolve and
-          i  % self.layers_per_resample == 0):
-        x = self.resample_layers[i // self.layers_per_resample](x)
+        # Scale and shift by conditioning.
+        if self.conditional:
+          y = layer(x)
+          x += norm([y, z])
 
-      # Scale and shift by conditioning.
-      if self.conditional:
-        y = layer(x)
-        x += norm([y, z])
+        # Regular residual network.
+        else:
+          x += norm(layer(x))
 
-      # Regular residual network.
-      else:
-        x += norm(layer(x))
-
-      # Optional: Resample after conv.
-      if (self.resample_layers and self.resample_after_convolve and
-          (i + 1) % self.layers_per_resample == 0):
-        x = self.resample_layers[i // self.layers_per_resample](x)
+        # Optional: Resample after conv.
+        if (self.resample_layers and self.resample_after_convolve and
+            (i + 1) % self.layers_per_resample == 0):
+          x = self.resample_layers[i // self.layers_per_resample](x)
 
     return x[:, :, 0, :]  # Convert back to 3-D.
 
