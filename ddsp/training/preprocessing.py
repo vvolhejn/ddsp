@@ -67,20 +67,33 @@ class F0LoudnessPreprocessor(nn.DictLayer):
                frame_rate=250,
                sample_rate=16000,
                compute_loudness=True,
+               compute_f0=False,
                **kwargs):
     super().__init__(**kwargs)
     self.time_steps = time_steps
     self.frame_rate = frame_rate
     self.sample_rate = sample_rate
     self.compute_loudness = compute_loudness
+    self.compute_f0 = compute_f0
 
-  def call(self, loudness_db, f0_hz, audio=None) -> [
-      'f0_hz', 'loudness_db', 'f0_scaled', 'ld_scaled']:
+  def call(self, loudness_db, f0_hz, f0_confidence, audio=None) -> [
+      'f0_hz', 'loudness_db', 'f0_scaled', 'ld_scaled', 'f0_confidence']:
+    # We have to pass f0_confidence for the case where `self.compute_f0` is off
+    # and we need to return the original confidence unchanged.
+
     # Compute loudness fresh (it's fast).
     if self.compute_loudness:
       loudness_db = ddsp.spectral_ops.compute_loudness(
           audio,
           sample_rate=self.sample_rate,
+          frame_rate=self.frame_rate)
+
+    # Recomputing f0 might be desirable if we want to include it in the timing info
+    if self.compute_f0:
+      assert len(audio) == 1, "Batch size must be 1 when recomputing f0."
+
+      f0_hz, f0_confidence = ddsp.spectral_ops.compute_f0(
+          audio[0],
           frame_rate=self.frame_rate)
 
     # Resample features to the frame_rate.
@@ -90,7 +103,7 @@ class F0LoudnessPreprocessor(nn.DictLayer):
     # Log-scale f0 features. Loudness from [-1, 0] to [1, 0].
     f0_scaled = scale_f0_hz(f0_hz)
     ld_scaled = scale_db(loudness_db)
-    return f0_hz, loudness_db, f0_scaled, ld_scaled
+    return f0_hz, loudness_db, f0_scaled, ld_scaled, f0_confidence
 
   @staticmethod
   def invert_scaling(f0_scaled, ld_scaled):

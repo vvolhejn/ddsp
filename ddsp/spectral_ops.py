@@ -327,7 +327,7 @@ def compute_loudness(audio,
   return loudness
 
 
-@gin.register
+@gin.configurable
 def compute_f0(audio, frame_rate, viterbi=True, padding='center', crepe_model='full'):
   """Fundamental frequency (f0) estimate using CREPE.
 
