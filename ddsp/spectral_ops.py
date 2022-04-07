@@ -328,7 +328,7 @@ def compute_loudness(audio,
 
 
 @gin.register
-def compute_f0(audio, frame_rate, viterbi=True, padding='center'):
+def compute_f0(audio, frame_rate, viterbi=True, padding='center', crepe_model='full'):
   """Fundamental frequency (f0) estimate using CREPE.
 
   This function is non-differentiable and takes input as a numpy array.
@@ -338,6 +338,8 @@ def compute_f0(audio, frame_rate, viterbi=True, padding='center'):
     viterbi: Use Viterbi decoding to estimate f0.
     padding: Apply zero-padding for centered frames.
       'same', 'valid', or 'center'.
+    crepe_model: Name of the CREPE model size to use:
+      'tiny', 'small', 'medium', 'large', or 'full'
 
   Returns:
     f0_hz: Fundamental frequency in Hz. Shape [n_frames,].
@@ -357,6 +359,7 @@ def compute_f0(audio, frame_rate, viterbi=True, padding='center'):
       viterbi=viterbi,
       step_size=crepe_step_size,
       center=False,
+      model_capacity=crepe_model,
       verbose=0)
 
   # Postprocessing.
