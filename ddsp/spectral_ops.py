@@ -328,7 +328,7 @@ def compute_loudness(audio,
 
 
 @gin.configurable
-def compute_f0(audio, frame_rate, viterbi=True, padding='center', crepe_model='full'):
+def compute_f0(audio, frame_rate, viterbi=True, padding='center', model_name='crepe-full'):
   """Fundamental frequency (f0) estimate using CREPE.
 
   This function is non-differentiable and takes input as a numpy array.
@@ -338,7 +338,7 @@ def compute_f0(audio, frame_rate, viterbi=True, padding='center', crepe_model='f
     viterbi: Use Viterbi decoding to estimate f0.
     padding: Apply zero-padding for centered frames.
       'same', 'valid', or 'center'.
-    crepe_model: Name of the CREPE model size to use:
+    model_name: Name of the CREPE model size to use:
       'tiny', 'small', 'medium', 'large', or 'full'
 
   Returns:
@@ -352,15 +352,25 @@ def compute_f0(audio, frame_rate, viterbi=True, padding='center', crepe_model='f
   audio = pad(audio, CREPE_FRAME_SIZE, hop_size, padding)
   audio = np.asarray(audio)
 
-  # Compute f0 with crepe.
-  _, f0_hz, f0_confidence, _ = crepe.predict(
-      audio,
-      sr=sample_rate,
-      viterbi=viterbi,
-      step_size=crepe_step_size,
-      center=False,
-      model_capacity=crepe_model,
-      verbose=0)
+  kind, size = model_name.split("-")
+
+  if kind == "crepe":
+    assert size in ['tiny', 'small', 'medium', 'large', 'full'], f"Unknown CREPE model size: {size}"
+
+    # Compute f0 with crepe.
+    _, f0_hz, f0_confidence, _ = crepe.predict(
+        audio,
+        sr=sample_rate,
+        viterbi=viterbi,
+        step_size=crepe_step_size,
+        center=False,
+        model_capacity=size,
+        verbose=0)
+  elif kind == "spice":
+    import ddsp.spice
+    f0_hz, f0_confidence = ddsp.spice.predict(audio, version=size)
+  else:
+    raise ValueError(f"Unrecognized pitch model name: {model_name}")
 
   # Postprocessing.
   f0_hz = f0_hz.astype(np.float32)

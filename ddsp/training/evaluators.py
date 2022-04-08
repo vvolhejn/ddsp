@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Library of evaluator implementations for use in eval_util."""
+import wandb
 import ddsp
 from ddsp.training import heuristics
 from ddsp.training import metrics
@@ -88,6 +89,7 @@ class BasicEvaluator(BaseEvaluator):
     for k, metric in self._avg_losses.items():
       latest_losses[k] = metric.result()
       tf.summary.scalar('losses/{}'.format(k), metric.result(), step=step)
+      wandb.log({'losses/{}'.format(k): metric.result(), "step": step})
       metric.reset_states()
 
 

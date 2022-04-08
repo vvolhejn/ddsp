@@ -94,7 +94,9 @@ class F0LoudnessPreprocessor(nn.DictLayer):
 
       f0_hz, f0_confidence = ddsp.spectral_ops.compute_f0(
           audio[0],
-          frame_rate=self.frame_rate)
+          #frame_rate=self.frame_rate
+          frame_rate=32,
+      )
 
     # Resample features to the frame_rate.
     f0_hz = self.resample(f0_hz)
