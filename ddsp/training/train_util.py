@@ -213,6 +213,7 @@ def write_gin_config(summary_writer, save_dir, step):
   with summary_writer.as_default():
     text_tensor = tf.convert_to_tensor(md_config_str)
     tf.summary.text(name="gin/" + base_name, data=text_tensor, step=step)
+    wandb.run.summary["gin/" + base_name] = md_config_str
     summary_writer.flush()
 
 
@@ -294,7 +295,7 @@ def train(
   wandb_run = wandb.init(project="neural-audio-synthesis-thesis",
                          entity="neural-audio-synthesis-thesis",
                          name=os.path.basename(save_dir),
-                         sync_tensorboard=True,
+                         # sync_tensorboard=True,
                          config=flag_values_dict,
                          dir="/cluster/scratch/vvolhejn/wandb",
                          tags=["train"])
@@ -355,20 +356,22 @@ def train(
       # Write Summaries.
       if step % steps_per_summary == 0 and save_dir:
 
+        def log_scalar(name, value):
+          tf.summary.scalar(name, value, step=step)
+          wandb.log({name: value}, step=int(step.numpy()))
+
         if "z_std_raw" in outputs:
-          tf.summary.scalar(
-            "z_std", tf.reduce_mean(outputs["z_std_raw"]), step=step
-          )
+          log_scalar("z_std", tf.reduce_mean(outputs["z_std_raw"]))
           tf.math.softplus(outputs["z_std_raw"]) + 1e-4
 
         # Speed.
         steps_per_sec = steps_per_summary / (time.time() - tick)
-        tf.summary.scalar("steps_per_sec", steps_per_sec, step=step)
+        log_scalar("steps_per_sec", steps_per_sec)
         tick = time.time()
 
         # Metrics.
         for k, metric in avg_losses.items():
-          tf.summary.scalar("losses/{}".format(k), metric.result(), step=step)
+          log_scalar("losses/{}".format(k), metric.result())
           metric.reset_states()
 
         sample_rate = 16000
@@ -383,11 +386,11 @@ def train(
         )
 
         summaries.audio_summary(
-          audio_both, step, sample_rate=sample_rate, name="audio_both"
+          audio_both, step=int(step.numpy()), sample_rate=sample_rate, name="audio_both"
         )
 
         if model_specific_summary_fn:
-          model_specific_summary_fn(outputs, step)
+          model_specific_summary_fn(outputs, int(step.numpy()))
 
       # Report metrics for hyperparameter tuning if enabled.
       if report_loss_to_hypertune:

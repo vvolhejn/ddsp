@@ -89,7 +89,7 @@ class BasicEvaluator(BaseEvaluator):
     for k, metric in self._avg_losses.items():
       latest_losses[k] = metric.result()
       tf.summary.scalar('losses/{}'.format(k), metric.result(), step=step)
-      wandb.log({'losses/{}'.format(k): metric.result(), "step": step})
+      wandb.log({'losses/{}'.format(k): metric.result()})
       metric.reset_states()
 
 

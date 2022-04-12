@@ -45,7 +45,7 @@ def fig_summary(tag, fig, step):
     """
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png")
-    wandb.log({tag: plt, "step": step})
+    wandb.log({tag: plt}, step=step)
 
     image_summary = tf.compat.v1.Summary.Image(encoded_image_string=buffer.getvalue())
     plt.close(fig)
@@ -165,10 +165,8 @@ def audio_summary(audio, step, sample_rate=16000, name="audio"):
     # W&B can only do one audio sample at a time, so let's just take the first one
     # from the batch.
     wandb.log(
-        {
-            name: wandb.Audio(audio[0], sample_rate=sample_rate),
-            "step": step,
-        }
+        {name: wandb.Audio(audio[0], sample_rate=sample_rate)},
+        step=step,
     )
 
 
