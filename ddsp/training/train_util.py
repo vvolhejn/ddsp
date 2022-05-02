@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Lint as: python3
 """Library of training functions."""
 
-import inspect
 import json
 import os
 import time
@@ -217,18 +215,6 @@ def write_gin_config(summary_writer, save_dir, step):
     summary_writer.flush()
 
 
-def gin_register_keras_layers():
-  """Registers all keras layers and Sequential to be referenceable in gin."""
-  # Register sequential model.
-  gin.external_configurable(tf.keras.Sequential, "tf.keras.Sequential")
-
-  # Register all the layers.
-  for k, v in inspect.getmembers(tf.keras.layers):
-    # Duck typing for tf.keras.layers.Layer since keras uses metaclasses.
-    if hasattr(v, "variables"):
-      gin.external_configurable(v, f"tf.keras.layers.{k}")
-
-
 def summarize_tensors(x):
   """
   Takes a structure (list, tuple, dict) where some of the values are tensors
@@ -324,23 +310,22 @@ def train(
   with summary_writer.as_default():
     tick = time.time()
 
-    for iteration in range(num_steps):
-      step = trainer.step  # Step is not iteration if restarting a model.
+    first_step = True
+
+    while trainer.step < num_steps:
+      step = trainer.step
 
       # Take a step.
       outputs, losses = trainer.train_step(dataset_iter)
 
-      if iteration == 10:
-        logging.info(rich.pretty.pretty_repr(summarize_tensors(outputs)))
-
       # Create training loss metrics when starting/restarting training.
-      if iteration == 0:
+      if first_step:
         loss_names = list(losses.keys())
-        logging.info("Creating metrics for %s", loss_names)
-        avg_losses = {
-          name: tf.keras.metrics.Mean(name=name, dtype=tf.float32)
-          for name in loss_names
-        }
+        logging.info('Creating metrics for %s', loss_names)
+        avg_losses = {name: tf.keras.metrics.Mean(name=name, dtype=tf.float32)
+                      for name in loss_names}
+        logging.info(rich.pretty.pretty_repr(summarize_tensors(outputs)))
+        first_step = False
 
       # Update metrics.
       for k, v in losses.items():
@@ -405,16 +390,16 @@ def train(
           "Total loss reached early stopping value of %s",
           early_stop_loss_value,
         )
-
-        # Write a final checkpoint.
-        if save_dir:
-          trainer.save(save_dir)
-          summary_writer.flush()
         break
 
       # Save Model.
       if step % steps_per_save == 0 and save_dir:
         trainer.save(save_dir)
         summary_writer.flush()
+
+  # Write a final checkpoint.
+  if save_dir:
+    trainer.save(save_dir)
+    summary_writer.flush()
 
   logging.info("Training Finished!")

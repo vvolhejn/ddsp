@@ -1,5 +1,6 @@
 # -*-Python-*-
 # Autoencoder that decodes from (power, f0).
+# All lengths from the 16kHz config * 3.
 
 import ddsp
 import ddsp.training
@@ -12,8 +13,8 @@ get_model.model = @models.Autoencoder()
 # Globals
 frame_rate = 50
 frame_size = 1024
-sample_rate = 16000
-n_samples = 64320  # Extra frame for center padding.
+sample_rate = 48000
+n_samples = 192960  # Extra frame for center padding. 48000 * 4 + 960
 
 
 # Preprocessor
@@ -41,8 +42,8 @@ RnnFcDecoder:
     layers_per_stack = 1
     input_keys = ('pw_scaled', 'f0_scaled')
     output_splits = (('amps', 1),
-                     ('harmonic_distribution', 60),
-                     ('noise_magnitudes', 65))
+                     ('harmonic_distribution', 100),
+                     ('noise_magnitudes', 98))
 
 # Losses
 Autoencoder.losses = [
@@ -52,6 +53,9 @@ SpectralLoss:
     loss_type = 'L1'
     mag_weight = 1.0
     logmag_weight = 1.0
+    fft_sizes = [6144, 3072, 1536, 768, 384, 192]
+
+# 16kHz fft sizes: (2048, 1024, 512, 256, 128, 64)
 
 # ==============
 # ProcessorGroup
@@ -81,9 +85,10 @@ ProcessorGroup.dag = [
 # Reverb
 FilteredNoiseReverb:
     name = 'reverb'
-    reverb_length = 24000
+    reverb_length = 72000
     n_frames = 500
     n_filter_banks = 32
+    initial_bias = -4.0
     trainable = True
 
 # Harmonic Synthesizer
@@ -94,6 +99,7 @@ Harmonic:
     normalize_below_nyquist = True
     scale_fn = @core.exp_sigmoid
     amp_resample_method = 'linear'
+    use_angular_cumsum = True  # Necessary at 48k as oscillators precess more.
 
 # Filtered Noise Synthesizer
 FilteredNoise:
@@ -109,6 +115,6 @@ processors.Add.name = 'add'
 # Since generation is forward.
 # Frame size is the frame of the "synthesis" which is just the hop size.
 Crop:
-    frame_size = 320
+    frame_size = 960
     crop_location = 'back'
 

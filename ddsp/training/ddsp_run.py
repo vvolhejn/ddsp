@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Lint as: python3
 r"""Train, evaluate, or sample (from) a ddsp model.
 
 Usage:
@@ -183,7 +182,6 @@ def main(unused_argv):
   gfile.makedirs(restore_dir)  # Only makes dirs if they don't exist.
   parse_gin(restore_dir)
   logging.info('Operative Gin Config:\n%s', gin.config.config_str())
-  train_util.gin_register_keras_layers()
 
   if FLAGS.allow_memory_growth:
     allow_memory_growth()

@@ -30,14 +30,21 @@ ddsp_export --model_path=/path/to/model --inference_model=[model_type] \
 --tflite=false --tfjs=false
 """
 
+import datetime
+import json
 import os
 
 from absl import app
 from absl import flags
 
+import ddsp
+from ddsp.training import data
 from ddsp.training import inference
+from ddsp.training import postprocessing
 from ddsp.training import train_util
 import gin
+import librosa
+import note_seq
 import tensorflow as tf
 from tensorflowjs.converters import converter
 
@@ -85,6 +92,102 @@ flags.DEFINE_string('metadata_file', None,
                     'Optional metadata file to pack into TFLite model.')
 
 FLAGS = flags.FLAGS
+
+# Metadata.
+flags.DEFINE_boolean('metadata', True, 'Save metadata for model as a json.')
+flags.DEFINE_string(
+    'dataset_path', None,
+    'Only required if FLAGS.metadata=True. Path to TF Records containing '
+    'training examples. Only used if no binding to train.data_provider can '
+    'be found.')
+
+# Reverb Impulse Response.
+flags.DEFINE_boolean('reverb', True,
+                     'Save reverb impulse response as a wav file.')
+flags.DEFINE_integer('reverb_sample_rate', 44100,
+                     'If not None, also save resampled reverb ir.')
+
+FLAGS = flags.FLAGS
+
+
+def get_data_provider(dataset_path, model_path):
+  """Get the data provider for dataset for statistics.
+
+  Read TF examples from specified path if provided, else use the
+  data provider specified in the gin config.
+  Args:
+    dataset_path: Path to an sstable of TF Examples.
+    model_path: Path to the model checkpoint dir containing the gin config.
+  Returns:
+    Data provider to calculate statistics over.
+  """
+  # First, see if the dataset path is specified
+  if dataset_path is not None:
+    dataset_path = train_util.expand_path(dataset_path)
+    return data.TFRecordProvider(dataset_path)
+  else:
+    inference.parse_operative_config(model_path)
+    try:
+      dp_binding = gin.query_parameter('train.data_provider')
+      return dp_binding.scoped_configurable_fn()
+
+    except ValueError as e:
+      raise Exception(
+          'Failed to parse dataset from gin. Either --dataset_path '
+          'or train.data_provider gin param must be set.') from e
+
+
+def get_metadata_dict(data_provider, model_path):
+  """Compute metadata using compute_dataset_statistics and add version/date."""
+
+  # Parse gin for num_harmonics and num_noise_amps.
+  inference.parse_operative_config(model_path)
+
+  # Get number of outputs.
+  ref = gin.query_parameter('Autoencoder.decoder')
+  decoder_type = ref.config_key[-1].split('.')[-1]
+  output_splits = dict(gin.query_parameter(f'{decoder_type}.output_splits'))
+
+  # Get power rate and size.
+  frame_size = gin.query_parameter('%frame_size')
+  frame_rate = gin.query_parameter('%frame_rate')
+  sample_rate = gin.query_parameter('%sample_rate')
+
+  # Compute stats.
+  full_metadata = postprocessing.compute_dataset_statistics(
+      data_provider,
+      power_frame_size=frame_size,
+      power_frame_rate=frame_rate)
+
+  lite_metadata = {
+      'mean_min_pitch_note':
+          float(full_metadata['mean_min_pitch_note']),
+      'mean_max_pitch_note':
+          float(full_metadata['mean_max_pitch_note']),
+      'mean_min_pitch_note_hz':
+          float(ddsp.core.midi_to_hz(full_metadata['mean_min_pitch_note'])),
+      'mean_max_pitch_note_hz':
+          float(ddsp.core.midi_to_hz(full_metadata['mean_max_pitch_note'])),
+      'mean_min_power_note':
+          float(full_metadata['mean_min_power_note']),
+      'mean_max_power_note':
+          float(full_metadata['mean_max_power_note']),
+      'version':
+          ddsp.__version__,
+      'export_time':
+          datetime.datetime.now().isoformat(),
+      'num_harmonics':
+          output_splits['harmonic_distribution'],
+      'num_noise_amps':
+          output_splits['noise_magnitudes'],
+      'frame_rate':
+          frame_rate,
+      'frame_size':
+          frame_size,
+      'sample_rate':
+          sample_rate,
+  }
+  return lite_metadata
 
 
 def get_inference_model(ckpt):
@@ -155,6 +258,35 @@ def saved_model_to_tflite(input_dir, save_dir, metadata_file=None):
   print('TFLite Conversion Success!')
 
 
+def export_impulse_response(model_path, save_dir, target_sr=None):
+  """Extracts and saves the reverb impulse response."""
+  with gin.unlock_config():
+    ddsp.training.inference.parse_operative_config(model_path)
+    model = ddsp.training.models.Autoencoder()
+    model.restore(model_path)
+  sr = model.processor_group.harmonic.sample_rate
+  reverb = model.processor_group.reverb
+  reverb.build(unused_input_shape=[])
+  ir = reverb.get_controls(audio=tf.zeros([1, 1]))['ir'].numpy()[0]
+  print(f'Reverb Impulse Response is {ir.shape[0] / sr} seconds long')
+
+  def save_ir(ir, sr):
+    """Save the impulse response."""
+    ir_path = os.path.join(save_dir, f'reverb_ir_{sr}_hz.wav')
+    with tf.io.gfile.GFile(ir_path, 'wb') as f:
+      wav_data = note_seq.audio_io.samples_to_wav_data(ir, sr)
+      f.write(wav_data)
+
+  # Save to original impulse response.
+  save_ir(ir, sr)
+
+  # Save the resampled impulse response.
+  if target_sr is not None:
+    sr = target_sr
+    ir = librosa.resample(ir, orig_sr=sr, target_sr=target_sr)
+    save_ir(ir, sr)
+
+
 def ensure_exits(dir_path):
   """Make directory if none exists."""
   if not tf.io.gfile.exists(dir_path):
@@ -187,6 +319,18 @@ def main(unused_argv):
   save_dir = train_util.expand_path(save_dir)
   ensure_exits(save_dir)
 
+  # Save reverb impulse response.
+  if FLAGS.reverb:
+    export_impulse_response(model_path, save_dir, FLAGS.reverb_sample_rate)
+
+  # Save metadata.
+  if FLAGS.metadata:
+    metadata_path = os.path.join(save_dir, 'metadata.json')
+    data_provider = get_data_provider(FLAGS.dataset_path, model_path)
+    metadata = get_metadata_dict(data_provider, model_path)
+    with tf.io.gfile.GFile(metadata_path, 'w') as f:
+      f.write(json.dumps(metadata))
+
   # Create SavedModel if none already exists.
   if not is_saved_model:
     ckpt_to_saved_model(model_path, save_dir)
@@ -200,7 +344,8 @@ def main(unused_argv):
   if FLAGS.tflite:
     tflite_dir = os.path.join(save_dir, 'tflite')
     ensure_exits(tflite_dir)
-    saved_model_to_tflite(save_dir, tflite_dir, FLAGS.metadata_file)
+    saved_model_to_tflite(save_dir, tflite_dir,
+                          metadata_path if FLAGS.metadata else '')
 
 
 def console_entry_point():
