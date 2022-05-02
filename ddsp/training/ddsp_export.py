@@ -109,7 +109,7 @@ def get_inference_model(ckpt):
       'vst_stateless_predict_controls': inference.VSTStatelessPredictControls,
       'vst_synthesize': inference.VSTSynthesize,
   }
-  return models[FLAGS.inference_model](ckpt)
+  return models[FLAGS.inference_model](ckpt, verbose=False)
 
 
 def ckpt_to_saved_model(ckpt, save_dir):

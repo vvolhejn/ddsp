@@ -89,6 +89,8 @@ class AutoencoderInference(models.Autoencoder):
         f'FilteredNoise.n_samples = {self.n_samples}',
         f'{self.preprocessor_type}.time_steps = {self.n_frames}',
         'oscillator_bank.use_angular_cumsum = True',
+        'F0LoudnessPreprocessor.compute_f0 = True',
+        'F0LoudnessPreprocessor.compute_loudness = True',
     ]
     if self.remove_reverb:
       # Remove reverb processor.
@@ -105,6 +107,8 @@ class AutoencoderInference(models.Autoencoder):
     with gin.unlock_config():
       gin.parse_config(config)
 
+    print(gin.config.config_str())
+
   def save_model(self, save_dir):
     """Saves a SavedModel after initialization."""
     self.save(save_dir)
@@ -115,6 +119,11 @@ class AutoencoderInference(models.Autoencoder):
     input_dict = {
         db_key: tf.zeros([self.n_frames]),
         'f0_hz': tf.zeros([self.n_frames]),
+        'f0_confidence': tf.zeros([self.n_frames]),
+        'audio': tf.zeros([1, self.length_seconds * 16000]),
+        # db_key: None,
+        # 'f0_hz': None,
+        # 'f0_confidence': None,
     }
     # Recursive print of shape.
     print('Inputs to Model:', ddsp.core.map_shape(input_dict))

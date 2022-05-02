@@ -349,8 +349,8 @@ def train(
       # Log the step.
       if step % steps_per_summary == 0:
         log_str = "step: {}\t".format(int(step.numpy()))
-        for k, v in losses.items():
-          log_str += "{}: {:.2f}\t".format(k, v)
+        for k, v in avg_losses.items():
+          log_str += "{}: {:.2f}\t".format(k, v.result())
         logging.info(log_str)
 
       # Write Summaries.
