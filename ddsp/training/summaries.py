@@ -128,7 +128,16 @@ def spectrogram_array_summary(
     Writes a summary of spectrograms for a list of sounds.
     Produces `audios.shape[0]` spectrograms.
     """
-    audios = tf.stack([audio for (audio, _) in audios_with_labels], axis=0)
+
+    # Trim the audios to equal length by cropping from the back.
+    # This is needed for models based on vst.gin because they add one frame at the end
+    # which is then trimmed (why?)
+    shortest_length = min([len(audio) for (audio, _) in audios_with_labels])
+
+    audios = tf.stack(
+        [tf.slice(audio, [0], [shortest_length]) for (audio, _) in audios_with_labels],
+        axis=0,
+    )
     labels = [label for (_, label) in audios_with_labels]
 
     n_audios = int(audios.shape[0])

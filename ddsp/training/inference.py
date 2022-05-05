@@ -160,12 +160,18 @@ class VSTBaseModule(models.Autoencoder):
     self.hop_size = self.sample_rate // frame_rate
 
     # Get number of outputs.
-    output_splits = dict(gin.query_parameter('RnnFcDecoder.output_splits'))
+    output_splits = get_decoder_output_splits()
+
     self.n_harmonics = output_splits['harmonic_distribution']
     self.n_noise = output_splits['noise_magnitudes']
 
-    # Get RNN dimesnions.
-    self.state_size = gin.query_parameter('RnnFcDecoder.rnn_channels')
+    # Get RNN dimensions.
+    try:
+      self.state_size = gin.query_parameter('RnnFcDecoder.rnn_channels')
+    except ValueError as e:
+      # The error "Configurable 'RnnFcDecoder' has no bound parameters." occurs
+      # when the decoder is something different, like a DilatedConvDecoder
+      self.state_size = None
 
     # Get interpolation method.
     self.resample_method = gin.query_parameter('Harmonic.amp_resample_method')
@@ -405,7 +411,7 @@ class VSTSynthesize(tf.keras.Model):
     self.hop_size = self.sample_rate // frame_rate
 
     # Get number of outputs.
-    output_splits = dict(gin.query_parameter('RnnFcDecoder.output_splits'))
+    output_splits = get_decoder_output_splits()
     self.n_harmonics = output_splits['harmonic_distribution']
     self.n_noise = output_splits['noise_magnitudes']
 
@@ -488,3 +494,86 @@ class VSTSynthesize(tf.keras.Model):
     return audio_out, final_phase
 
 
+class AutoencoderFull(VSTBaseModule):
+
+  def configure_gin(self):
+    pass
+
+  def __init__(self,
+               ckpt,
+               n_samples,
+               verbose=True,
+               **kwargs):
+    self.n_samples = n_samples
+    super().__init__(ckpt, verbose=verbose, **kwargs)
+
+  @property
+  def _signatures(self):
+    return {'call': self.call.get_concrete_function(
+        audio=tf.TensorSpec(shape=[self.n_samples], dtype=tf.float32),
+    )}
+
+  def build_network(self):
+    """Run a fake batch through the network."""
+    audio = tf.zeros([self.n_samples])
+
+    self.preprocessor.compute_f0 = True
+    self.preprocessor.crepe_model = ddsp.spectral_ops.PretrainedCREPE(
+      model_size_or_path="tiny", hop_size=self.preprocessor.hop_size
+    )
+
+    self._build_network(audio)
+
+  @tf.function
+  def call(self, audio):
+    """Convert f0 and loudness to synthesizer parameters."""
+    inputs = {
+        'audio': tf.reshape(audio, [1, self.n_samples]),
+    }
+
+    # 'f0_hz', 'pw_db', 'f0_scaled', 'pw_scaled', 'f0_confidence'
+    self.preprocessor.compute_f0 = True
+    # prep = self.preprocessor(tf.reshape(tf.sin(tf.linspace(0, 1000, 16000)), [1, 16000]))
+    features = self.preprocessor(inputs)
+
+    # Run through the model.
+    outputs = self.decoder(features, training=False)
+
+    # Apply the nonlinearities.
+    harm_controls = self.processor_group.harmonic.get_controls(
+        outputs['amps'], outputs['harmonic_distribution'], features["f0_hz"])
+
+    noise_controls = self.processor_group.filtered_noise.get_controls(
+        outputs['noise_magnitudes']
+    )
+
+    # Return 2-D tensors.
+    amps = harm_controls['amplitudes'][0, :, :]
+    hd = harm_controls['harmonic_distribution'][0, :, :]
+    noise = noise_controls['magnitudes'][0, :, :]
+    # return amps, hd, noise, features["f0_hz"]
+    return {
+      "amplitudes": amps,
+      "harmonic_distribution": hd,
+      "noise_magnitudes": noise,
+      "f0_hz": features["f0_hz"],
+    }
+
+
+def get_decoder_output_splits():
+  """
+  The output_splits parameter of the decoder determines how many output dimensions
+  go to which key (normally 'amps', 'harmonic_distribution' and 'noise_magnitudes').
+  The decoder might be a RnnFcDecoder or a DilatedConvDecoder, so we need to go through
+  one more indirection.
+  """
+
+  # The config has a line similar to
+  # Autoencoder.decoder = @decoders.DilatedConvDecoder()
+
+  ref = gin.query_parameter('Autoencoder.decoder')
+
+  # name is e.g. "DilatedConvDecoder"
+  name = ref.config_key[-1].split('.')[-1]
+
+  return dict(gin.query_parameter(f'{name}.output_splits'))

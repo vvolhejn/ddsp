@@ -73,6 +73,7 @@ flags.DEFINE_enum(
         'vst_predict_controls',
         'vst_stateless_predict_controls',
         'vst_synthesize',
+        'autoencoder_full',
     ],
     'Specify the ddsp.training.inference model to use for '
     'converting a checkpoint to a SavedModel. Names are '
@@ -205,14 +206,17 @@ def get_inference_model(ckpt):
   with gin.unlock_config():
     gin.parse_config_files_and_bindings(None, FLAGS.gin_param)
 
+  print(gin.config.config_str())
+
   models = {
       'autoencoder': inference.AutoencoderInference,
       'vst_extract_features': inference.VSTExtractFeatures,
       'vst_predict_controls': inference.VSTPredictControls,
       'vst_stateless_predict_controls': inference.VSTStatelessPredictControls,
       'vst_synthesize': inference.VSTSynthesize,
+      'autoencoder_full': inference.AutoencoderFull,
   }
-  return models[FLAGS.inference_model](ckpt, verbose=False)
+  return models[FLAGS.inference_model](ckpt, verbose=False, n_samples=64000)
 
 
 def ckpt_to_saved_model(ckpt, save_dir):
@@ -245,6 +249,21 @@ def saved_model_to_tflite(input_dir, save_dir, metadata_file=None):
       tf.lite.OpsSet.TFLITE_BUILTINS,  # Enable TensorFlow Lite ops.
       tf.lite.OpsSet.SELECT_TF_OPS,  # Enable extended TensorFlow ops.
   ]
+  # tflite_converter.optimizations = [tf.lite.Optimize.DEFAULT]
+  #
+  # data_provider = ddsp.training.data.TFRecordProvider(
+  #   file_pattern="/cluster/home/vvolhejn/datasets/violin2/violin2.tfrecord*",
+  #   frame_rate=50,
+  #   centered=True,
+  # )
+  # def representative_data_gen():
+  #   dataset = data_provider.get_batch(batch_size=1, shuffle=True, repeats=1)
+  #   for i, batch in zip(range(10), dataset):
+  #     # Model has only one input so each data point has one element.
+  #     yield [batch["audio"]]
+  #
+  # tflite_converter.representative_dataset = representative_data_gen
+
   tflite_model = tflite_converter.convert()  # Byte string.
   # Save the model.
   save_path = os.path.join(save_dir, 'model.tflite')
@@ -263,7 +282,7 @@ def export_impulse_response(model_path, save_dir, target_sr=None):
   with gin.unlock_config():
     ddsp.training.inference.parse_operative_config(model_path)
     model = ddsp.training.models.Autoencoder()
-    model.restore(model_path)
+    model.restore(model_path, verbose=False)
   sr = model.processor_group.harmonic.sample_rate
   reverb = model.processor_group.reverb
   reverb.build(unused_input_shape=[])

@@ -1208,6 +1208,20 @@ class DilatedConvStack(tfkl.Layer):
 
     return x[:, :, 0, :]  # Convert back to 3-D.
 
+  def total_padding(self):
+    """
+    How many zeroes does TensorFlow implicitly add to the input to get an output of the
+    same size? I found this formula by disabling padding and residual connections
+    (replacing `x += norm(layer(x))` with `x = norm(layer(x))`). Then I tried different
+    parameter combinations and found the formula by trial and error. The "total padding"
+    is then the difference in length between the input and output tensors in this setup.
+    """
+    stacks_correction = (self.kernel_size - 1) * (self.stacks - 1)
+    res = (self.kernel_size - 1) * (
+            self.stacks * 2**self.layers_per_stack
+    ) - stacks_correction
+    return res
+
 
 @gin.register
 class FcStackOut(tfkl.Layer):

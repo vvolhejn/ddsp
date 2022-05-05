@@ -103,7 +103,12 @@ class Model(tf.keras.Model):
         logging.info(log_str)
         fake_model = tf.train.Checkpoint(**to_restore)
         new_root = tf.train.Checkpoint(model=fake_model)
-        status = new_root.restore(latest_checkpoint)
+
+        if verbose:
+          status = new_root.restore(latest_checkpoint)
+        else:
+          status = new_root.restore(latest_checkpoint).expect_partial()
+
         status.assert_existing_objects_matched()
 
     logging.info('Loaded checkpoint %s', latest_checkpoint)
