@@ -212,7 +212,7 @@ class VSTExtractFeatures(VSTBaseModule):
                verbose=True,
                **kwargs):
     self.crepe_saved_model_path = crepe_saved_model_path
-    super().__init__(ckpt, **kwargs)
+    super().__init__(ckpt, verbose=verbose, **kwargs)
 
   def configure_gin(self):
     """Parse the model operative config with special streaming parameters."""
@@ -502,61 +502,109 @@ class AutoencoderFull(VSTBaseModule):
   def __init__(self,
                ckpt,
                n_samples,
+               n_frames,
                verbose=True,
                **kwargs):
     self.n_samples = n_samples
+    self.n_frames = n_frames
     super().__init__(ckpt, verbose=verbose, **kwargs)
 
   @property
   def _signatures(self):
     return {'call': self.call.get_concrete_function(
-        audio=tf.TensorSpec(shape=[self.n_samples], dtype=tf.float32),
+        f0_scaled=tf.TensorSpec(shape=[self.n_frames], dtype=tf.float32),
+        pw_scaled=tf.TensorSpec(shape=[self.n_frames], dtype=tf.float32),
     )}
 
   def build_network(self):
     """Run a fake batch through the network."""
-    audio = tf.zeros([self.n_samples])
+    # audio = tf.zeros([self.n_samples])
+    # f0_hz = tf.zeros([self.n_frames])
+    # f0_confidence = tf.zeros([self.n_frames])
 
-    self.preprocessor.compute_f0 = True
-    self.preprocessor.crepe_model = ddsp.spectral_ops.PretrainedCREPE(
-      model_size_or_path="tiny", hop_size=self.preprocessor.hop_size
-    )
+    f0_scaled = tf.zeros([self.n_frames])
+    pw_scaled = tf.zeros([self.n_frames])
 
-    self._build_network(audio)
+    #del self.decoder
+    self.preprocessor.compute_f0 = False
+    # self.preprocessor.crepe_model = ddsp.spectral_ops.PretrainedCREPE(
+    #   model_size_or_path="small", hop_size=self.preprocessor.hop_size
+    # )
+
+    self._build_network(f0_scaled, pw_scaled)
 
   @tf.function
-  def call(self, audio):
+  def call(self, f0_scaled, pw_scaled):
     """Convert f0 and loudness to synthesizer parameters."""
-    inputs = {
-        'audio': tf.reshape(audio, [1, self.n_samples]),
+    # inputs = {
+    #     # 'audio': tf.reshape(audio, [1, self.n_samples]),
+    #     # 'audio': tf.expand_dims(audio, axis=0),
+    #     # 'f0_hz': tf.reshape(f0_hz, [1, self.n_frames]),
+    #     # 'f0_confidence': tf.reshape(f0_confidence, [1, self.n_frames]),
+    #     # 'f0_hz': tf.expand_dims(f0_hz, axis=0),
+    #     # 'f0_confidence': tf.expand_dims(f0_confidence, axis=0),
+    #     'audio': tf.random.uniform([1, self.n_samples], minval=0, maxval=1),
+    #     'f0_hz': tf.random.uniform([1, self.n_frames], minval=0, maxval=1000),
+    #     'f0_confidence': tf.random.uniform([1, self.n_frames], minval=0, maxval=1000),
+    # }
+
+    # features = self.preprocessor(inputs)
+
+    # features = {
+    #   "f0_hz": ddsp.core.resample(
+    #     tf.reshape(audio, [1, self.n_samples, 1]),
+    #     n_timesteps=201,
+    #   ),
+    #   "f0_confidence": tf.zeros([1, 201]),
+    #   "pw_db": tf.zeros([1, 201, 1]),
+    #   "f0_scaled": ddsp.core.resample(
+    #     tf.reshape(audio, [1, self.n_samples, 1]),
+    #     n_timesteps=201,
+    #   ),
+    #   "pw_scaled": tf.zeros([1, 201, 1]),
+    #   #"f0_hz": tf.reshape(tf.sin(tf.linspace(0, 1000, 51)), [1, 51])),
+    # }
+
+    features = {
+      # 'f0_scaled': tf.random.uniform([1, 201, 1], minval=0, maxval=1),
+      # 'pw_scaled': tf.random.uniform([1, 201, 1], minval=0, maxval=1),
+      'f0_scaled': tf.reshape(f0_scaled, [1, self.n_frames, 1, 1]),
+      'pw_scaled': tf.reshape(pw_scaled, [1, self.n_frames, 1, 1]),
+      # 'f0_scaled': features["f0_scaled"],
+      # 'f0_confidence': features["f0_confidence"],
+      # 'f0_hz': features["f0_hz"],
+      # 'pw_db': features["pw_db"],
+      # 'pw_scaled': features["pw_scaled"],
     }
 
-    # 'f0_hz', 'pw_db', 'f0_scaled', 'pw_scaled', 'f0_confidence'
-    self.preprocessor.compute_f0 = True
-    # prep = self.preprocessor(tf.reshape(tf.sin(tf.linspace(0, 1000, 16000)), [1, 16000]))
-    features = self.preprocessor(inputs)
+    # This causes trouble!
+    # features["f0_scaled"] = scale_f0_hz(features["f0_hz"])
 
     # Run through the model.
     outputs = self.decoder(features, training=False)
 
     # Apply the nonlinearities.
-    harm_controls = self.processor_group.harmonic.get_controls(
-        outputs['amps'], outputs['harmonic_distribution'], features["f0_hz"])
+    # harm_controls = self.processor_group.harmonic.get_controls(
+    #     outputs['amps'], outputs['harmonic_distribution'], features["f0_hz"])
 
-    noise_controls = self.processor_group.filtered_noise.get_controls(
-        outputs['noise_magnitudes']
-    )
+    # noise_controls = self.processor_group.filtered_noise.get_controls(
+    #     outputs['noise_magnitudes']
+    # )
 
     # Return 2-D tensors.
-    amps = harm_controls['amplitudes'][0, :, :]
-    hd = harm_controls['harmonic_distribution'][0, :, :]
-    noise = noise_controls['magnitudes'][0, :, :]
+    # amps = harm_controls['amplitudes'][0, :, :]
+    # hd = harm_controls['harmonic_distribution'][0, :, :]
+    # noise = noise_controls['magnitudes'][0, :, :]
     # return amps, hd, noise, features["f0_hz"]
+
     return {
-      "amplitudes": amps,
-      "harmonic_distribution": hd,
-      "noise_magnitudes": noise,
-      "f0_hz": features["f0_hz"],
+      "amps": outputs["amps"],
+      "harmonic_distribution": outputs["harmonic_distribution"],
+      "noise_magnitudes": outputs["noise_magnitudes"],
+      # "f0_hz": features["f0_hz"],
+      #"foo": harm_controls["amplitudes"],
+      # "foo": harm_controls["amplitudes"],
+      # "bar": harm_controls["harmonic_distribution"],
     }
 
 

@@ -48,7 +48,6 @@ import note_seq
 import tensorflow as tf
 from tensorflowjs.converters import converter
 
-
 from tflite_support import metadata as _metadata
 
 
@@ -216,7 +215,8 @@ def get_inference_model(ckpt):
       'vst_synthesize': inference.VSTSynthesize,
       'autoencoder_full': inference.AutoencoderFull,
   }
-  return models[FLAGS.inference_model](ckpt, verbose=False, n_samples=64000)
+  # return models[FLAGS.inference_model](ckpt, verbose=False, crepe_saved_model_path="small")  # , n_samples=64000
+  return models[FLAGS.inference_model](ckpt, verbose=False, n_samples=64000, n_frames=201)
 
 
 def ckpt_to_saved_model(ckpt, save_dir):
@@ -240,33 +240,31 @@ def saved_model_to_tfjs(input_dir, save_dir):
   print('TFJS Conversion Success!')
 
 
-def saved_model_to_tflite(input_dir, save_dir, metadata_file=None):
+def saved_model_to_tflite(input_dir, save_dir, metadata_file=None, quantize=True):
   """Convert SavedModel to TFLite model."""
   print(f'\nConverting to TFLite:\nInput:{input_dir}\nOutput:{save_dir}\n')
   # Convert the model.
   tflite_converter = tf.lite.TFLiteConverter.from_saved_model(input_dir)
   tflite_converter.target_spec.supported_ops = [
-      tf.lite.OpsSet.TFLITE_BUILTINS,  # Enable TensorFlow Lite ops.
-      tf.lite.OpsSet.SELECT_TF_OPS,  # Enable extended TensorFlow ops.
+    tf.lite.OpsSet.TFLITE_BUILTINS,  # Enable TensorFlow Lite ops.
+    tf.lite.OpsSet.SELECT_TF_OPS,  # Enable extended TensorFlow ops.
   ]
-  # tflite_converter.optimizations = [tf.lite.Optimize.DEFAULT]
-  #
-  # data_provider = ddsp.training.data.TFRecordProvider(
-  #   file_pattern="/cluster/home/vvolhejn/datasets/violin2/violin2.tfrecord*",
-  #   frame_rate=50,
-  #   centered=True,
-  # )
-  # def representative_data_gen():
-  #   dataset = data_provider.get_batch(batch_size=1, shuffle=True, repeats=1)
-  #   for i, batch in zip(range(10), dataset):
-  #     # Model has only one input so each data point has one element.
-  #     yield [batch["audio"]]
-  #
-  # tflite_converter.representative_dataset = representative_data_gen
+
+  if quantize:
+    representative_dataset = get_representative_dataset(
+      "/cluster/home/vvolhejn/datasets/violin2/violin2.tfrecord*"
+    )
+    tflite_converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    tflite_converter.representative_dataset = representative_dataset
+
+    tflite_converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    tflite_converter.inference_input_type = tf.int8  # or tf.uint8
+    tflite_converter.inference_output_type = tf.int8  # or tf.uint8
 
   tflite_model = tflite_converter.convert()  # Byte string.
   # Save the model.
-  save_path = os.path.join(save_dir, 'model.tflite')
+  model_name = "model_quantized.tflite" if quantize else "model_unquantized.tflite"
+  save_path = os.path.join(save_dir, model_name)
   with tf.io.gfile.GFile(save_path, 'wb') as f:
     f.write(tflite_model)
 
@@ -275,6 +273,55 @@ def saved_model_to_tflite(input_dir, save_dir, metadata_file=None):
     populator.load_associated_files([metadata_file])
     populator.populate()
   print('TFLite Conversion Success!')
+
+  if quantize:
+    test_quantization(tflite_converter, representative_dataset)
+
+
+def get_representative_dataset(file_pattern, include_f0_hz=False):
+  data_provider = ddsp.training.data.TFRecordProvider(
+    file_pattern=file_pattern,
+    frame_rate=50,
+    centered=True,
+  )
+
+  preprocessor = ddsp.training.preprocessing.OnlineF0PowerPreprocessor(
+    frame_rate=50,
+    padding="center",
+    compute_f0=False,
+  )
+
+  def representative_dataset():
+    import numpy as np
+
+    dataset = data_provider.get_batch(batch_size=1, shuffle=True, repeats=1)
+    for i, batch in zip(range(40), dataset):
+      # Model has only one input so each data point has one element.
+      # yield [np.expand_dims(np.array(batch["audio"]), axis=0)]
+      # print([batch["audio"][0].shape, batch["f0_hz"][0].shape, batch["f0_confidence"][0].shape])
+      # yield [batch["audio"][0], batch["f0_hz"][0], batch["f0_confidence"][0]]
+      features = preprocessor(batch)
+
+      if not include_f0_hz:
+        yield [features["f0_scaled"], features["pw_scaled"]]
+      else:
+        yield [features["f0_scaled"], features["pw_scaled"], features["f0_hz"], batch["audio"], batch["f0_confidence"]]
+      #yield [batch["f0_hz"], batch["f0_confidence"]]
+      # yield [batch["f0_hz"][0,:1], batch["loudness_db"][0,:1]]
+
+  return representative_dataset
+
+
+def test_quantization(tflite_converter, representative_dataset):
+  """
+  Running the model through the quantization debugger mainly ensures that the model is
+  runnable - in some scenarios, models convert correctly but fail with SIGABRT when run.
+  """
+  debugger = tf.lite.experimental.QuantizationDebugger(
+    converter=tflite_converter, debug_dataset=representative_dataset
+  )
+  debugger.run()
+  print(str(debugger.layer_statistics)[:1000] + " [...and more layer statistics]")
 
 
 def export_impulse_response(model_path, save_dir, target_sr=None):
