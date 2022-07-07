@@ -119,6 +119,32 @@ class F0LoudnessPreprocessor(nn.DictLayer):
 
 
 @gin.register
+class JukeboxPreprocessor(nn.DictLayer):
+
+  def __init__(self, sample_rate=16000, **kwargs):
+    super().__init__(**kwargs)
+
+    from ddsp.training import jukebox
+    self.jukebox = jukebox
+
+    self.sample_rate = sample_rate
+    self.frame_rate = self.sample_rate // jukebox.strides[2]
+
+  def call(self, f0_hz, jukebox_indices_0, jukebox_indices_1, jukebox_indices_2) -> [
+    'f0_hz', 'f0_scaled', 'jukebox_embeddings_0', 'jukebox_embeddings_1',
+    'jukebox_embeddings_2']:
+    embeddings = self.jukebox.embedding_lookup(
+      [jukebox_indices_0[:,:-1], jukebox_indices_1[:,:-1], jukebox_indices_2[:,:-1]])
+
+    f0_hz = at_least_3d(f0_hz)
+    f0_hz = ddsp.core.resample(f0_hz, embeddings[2].shape[1])
+
+    f0_scaled = scale_f0_hz(f0_hz)
+
+    return f0_hz, f0_scaled, *tuple(embeddings)
+
+
+@gin.register
 class F0PowerPreprocessor(F0LoudnessPreprocessor):
   """Dynamically compute additional power_db feature."""
 

@@ -21,6 +21,7 @@ import time
 from absl import logging
 import rich.pretty
 
+from ddsp.training.data import TFRecordProvider
 from ddsp.training.trainers import Trainer
 from ddsp.training import cloud, summaries
 import gin
@@ -236,7 +237,7 @@ def summarize_tensors(x):
 # ------------------------ Training Loop ---------------------------------------
 @gin.configurable
 def train(
-        data_provider,
+        data_provider: TFRecordProvider,
         trainer: Trainer,
         batch_size=32,
         num_steps=1000000,
@@ -274,6 +275,12 @@ def train(
   dataset = data_provider.get_batch(batch_size, shuffle=True, repeats=-1)
   dataset = trainer.distribute_dataset(dataset)
   dataset_iter = iter(dataset)
+
+  eval_data_provider = data_provider.get_evaluation_set()
+  eval_dataset = eval_data_provider.get_batch(batch_size, shuffle=True, repeats=-1)
+  eval_dataset = trainer.distribute_dataset(eval_dataset)
+  eval_dataset_iter = iter(eval_dataset)
+
 
   # Build model, easiest to just run forward pass.
   trainer.build(next(dataset_iter))
@@ -377,6 +384,10 @@ def train(
         if model_specific_summary_fn:
           model_specific_summary_fn(outputs, int(step.numpy()))
 
+        eval_losses = evaluate(trainer, eval_dataset_iter)
+        for k, v in eval_losses.items():
+          log_scalar(f"losses/eval_{k}", v)
+
       # Report metrics for hyperparameter tuning if enabled.
       if report_loss_to_hypertune:
         cloud.report_metric_to_hypertune(losses["total_loss"], step.numpy())
@@ -403,3 +414,21 @@ def train(
     summary_writer.flush()
 
   logging.info("Training Finished!")
+
+
+def evaluate(trainer: Trainer, dataset_iter, n_batches=10):
+  for i in range(n_batches):
+    losses = trainer.eval_step(dataset_iter)
+
+    if i == 0:
+      loss_names = list(losses.keys())
+      avg_losses = {name: tf.keras.metrics.Mean(name=name, dtype=tf.float32)
+                    for name in loss_names}
+
+    for k, v in losses.items():
+      avg_losses[k].update_state(v)
+
+  avg_losses = {k: v.result() for k, v in avg_losses.items()}
+  print(avg_losses)
+
+  return avg_losses

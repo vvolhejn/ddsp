@@ -1092,6 +1092,23 @@ class DilatedConvStack(tfkl.Layer):
     self.norm_type = norm_type
     self.resample_after_convolve = resample_after_convolve
 
+    self.config_dict = {
+      "ch": ch,
+      "layers_per_stack": layers_per_stack,
+      "stacks": stacks,
+      "kernel_size": kernel_size,
+      "dilation": dilation,
+      "norm_type": norm_type,
+      "resample_type": resample_type,
+      "resample_stride": resample_stride,
+      "stacks_per_resample": stacks_per_resample,
+      "resample_after_convolve": resample_after_convolve,
+      "spectral_norm": spectral_norm,
+      "ortho_init": ortho_init,
+      "shift_only": shift_only,
+      "conditional": conditional,
+    }
+
     initializer = 'orthogonal' if ortho_init else 'glorot_uniform'
 
     def conv(ch, k, stride=1, dilation=1, transpose=False):
@@ -1169,6 +1186,11 @@ class DilatedConvStack(tfkl.Layer):
       self.layers_per_resample = len(self.layers) // len(self.resample_layers)
     else:
       self.layers_per_resample = 0
+
+  def get_config(self):
+    config = super().get_config()
+    config.update(self.config_dict)
+    return config
 
   def call(self, inputs):
     """Forward pass."""

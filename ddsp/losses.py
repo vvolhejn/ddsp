@@ -147,6 +147,7 @@ class SpectralLoss(Loss):
                cumsum_freq_weight=0.0,
                logmag_weight=0.0,
                loudness_weight=0.0,
+               max_random_crop=0,
                name='spectral_loss'):
     """Constructor, set loss weights of various components.
 
@@ -185,10 +186,11 @@ class SpectralLoss(Loss):
     self.cumsum_freq_weight = cumsum_freq_weight
     self.logmag_weight = logmag_weight
     self.loudness_weight = loudness_weight
+    self.max_random_crop = max_random_crop
 
     self.spectrogram_ops = []
     for size in self.fft_sizes:
-      spectrogram_op = functools.partial(spectral_ops.compute_mag, size=size)
+      spectrogram_op = functools.partial(spectral_ops.compute_mag, size=size, pad_end=False)
       self.spectrogram_ops.append(spectrogram_op)
 
   def call(self, target_audio, audio, weights=None):
@@ -197,10 +199,17 @@ class SpectralLoss(Loss):
     diff = core.diff
     cumsum = tf.math.cumsum
 
+    if self.max_random_crop > 0:
+      random_crop = tf.random.uniform(shape=[], maxval=self.max_random_crop, dtype=tf.int32)
+    else:
+      random_crop = tf.constant(0, dtype=tf.int32)
+
     # Compute loss for each fft size.
     for loss_op in self.spectrogram_ops:
-      target_mag = loss_op(target_audio)
-      value_mag = loss_op(audio)
+      # tf.print("SHAPE:", target_audio[...,random_crop:].shape)
+
+      target_mag = loss_op(target_audio[...,random_crop:])
+      value_mag = loss_op(audio[...,random_crop:])
 
       # Add magnitude loss.
       if self.mag_weight > 0:
@@ -239,6 +248,8 @@ class SpectralLoss(Loss):
       value = spectral_ops.compute_loudness(audio, n_fft=2048, use_tf=True)
       loss += self.loudness_weight * mean_difference(
           target, value, self.loss_type, weights=weights)
+
+    tf.debugging.assert_all_finite(loss, "Not all finite!")
 
     return loss
 

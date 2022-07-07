@@ -21,6 +21,8 @@ import numpy as np
 import pydub
 import tensorflow.compat.v2 as tf
 
+from ddsp.training import jukebox
+
 CREPE_SAMPLE_RATE = spectral_ops.CREPE_SAMPLE_RATE  # 16kHz.
 
 
@@ -95,6 +97,27 @@ def _add_f0_estimate(ex, frame_rate, center, viterbi):
   return ex
 
 
+def _add_jukebox_embeddings(ex):
+  beam.metrics.Metrics.counter('prepare-tfrecord', 'compute-jukebox-encodings').inc()
+  audio = ex['audio_16k']
+
+  import ddsp.training.jukebox
+
+  # encodings is a list of three elements, one per encoding level.
+  # The downsampling rates are 8, 32, 128
+  embeddings = ddsp.training.jukebox.encode(audio)
+
+  ex = dict(ex)
+
+  # Get rid of the batch dimension
+  embeddings = [np.array(e).squeeze(axis=0) for e in embeddings]
+
+  ex.update({
+      'jukebox_indices': embeddings,
+  })
+  return ex
+
+
 def _add_loudness(ex, frame_rate, n_fft, center):
   """Add loudness in dB."""
   beam.metrics.Metrics.counter('prepare-tfrecord', 'compute-loudness').inc()
@@ -122,19 +145,25 @@ def _split_example(ex, sample_rate, frame_rate, example_secs, hop_secs, center):
       end = start + window_size
       yield sequence[start:end]
 
-  for audio, audio_16k, loudness_db, f0_hz, f0_confidence in zip(
+  for audio, audio_16k, loudness_db, f0_hz, f0_confidence, je0, je1, je2 in zip(
       get_windows(ex['audio'], sample_rate, center=False),
       get_windows(ex['audio_16k'], CREPE_SAMPLE_RATE, center=False),
       get_windows(ex['loudness_db'], frame_rate, center),
       get_windows(ex['f0_hz'], frame_rate, center),
-      get_windows(ex['f0_confidence'], frame_rate, center)):
+      get_windows(ex['f0_confidence'], frame_rate, center),
+      get_windows(ex['jukebox_indices'][0], sample_rate // jukebox.strides[0], center),
+      get_windows(ex['jukebox_indices'][1], sample_rate // jukebox.strides[1], center),
+      get_windows(ex['jukebox_indices'][2], sample_rate // jukebox.strides[2], center)):
     beam.metrics.Metrics.counter('prepare-tfrecord', 'split-example').inc()
     yield {
         'audio': audio,
         'audio_16k': audio_16k,
         'loudness_db': loudness_db,
         'f0_hz': f0_hz,
-        'f0_confidence': f0_confidence
+        'f0_confidence': f0_confidence,
+        'jukebox_indices_0': je0,
+        'jukebox_indices_1': je1,
+        'jukebox_indices_2': je2,
     }
 
 
@@ -251,7 +280,8 @@ def prepare_tfrecord(input_audio_paths,
           | beam.Map(_add_loudness,
                      frame_rate=frame_rate,
                      n_fft=512,
-                     center=center))
+                     center=center)
+          | beam.Map(_add_jukebox_embeddings))
 
     # Create train/eval split.
     if eval_split_fraction:

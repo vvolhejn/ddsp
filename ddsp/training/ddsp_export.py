@@ -82,6 +82,8 @@ flags.DEFINE_enum(
 flags.DEFINE_multi_string('gin_param', [],
                           'Gin parameters for custom inference model kwargs.')
 flags.DEFINE_boolean('debug', False, 'DEBUG: Do not save the model')
+flags.DEFINE_boolean('quantize', True,
+                     'Apply int8 quantization to the model.')
 
 # Conversion formats.
 flags.DEFINE_boolean('tfjs', True,
@@ -249,6 +251,9 @@ def saved_model_to_tflite(input_dir, save_dir, metadata_file=None, quantize=True
     tf.lite.OpsSet.TFLITE_BUILTINS,  # Enable TensorFlow Lite ops.
     tf.lite.OpsSet.SELECT_TF_OPS,  # Enable extended TensorFlow ops.
   ]
+  # tflite_converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+  print(f"Quantization {'on' if quantize else 'off'}.")
 
   if quantize:
     representative_dataset = get_representative_dataset(
@@ -257,9 +262,9 @@ def saved_model_to_tflite(input_dir, save_dir, metadata_file=None, quantize=True
     tflite_converter.optimizations = [tf.lite.Optimize.DEFAULT]
     tflite_converter.representative_dataset = representative_dataset
 
-    tflite_converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-    tflite_converter.inference_input_type = tf.int8  # or tf.uint8
-    tflite_converter.inference_output_type = tf.int8  # or tf.uint8
+    #tflite_converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    #tflite_converter.inference_input_type = tf.int8  # or tf.uint8
+    #tflite_converter.inference_output_type = tf.int8  # or tf.uint8
 
   tflite_model = tflite_converter.convert()  # Byte string.
   # Save the model.
@@ -411,7 +416,8 @@ def main(unused_argv):
     tflite_dir = os.path.join(save_dir, 'tflite')
     ensure_exits(tflite_dir)
     saved_model_to_tflite(save_dir, tflite_dir,
-                          metadata_path if FLAGS.metadata else '')
+                          metadata_path if FLAGS.metadata else '',
+                          quantize=FLAGS.quantize)
 
 
 def console_entry_point():

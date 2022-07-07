@@ -19,6 +19,7 @@ from absl import logging
 from ddsp.spectral_ops import CREPE_FRAME_SIZE
 from ddsp.spectral_ops import CREPE_SAMPLE_RATE
 from ddsp.spectral_ops import get_framed_lengths
+from ddsp.training import jukebox
 import gin
 import tensorflow.compat.v2 as tf
 import tensorflow_datasets as tfds
@@ -210,13 +211,38 @@ class TFRecordProvider(DataProvider):
                example_secs=4,
                sample_rate=16000,
                frame_rate=250,
-               centered=False):
+               centered=False,
+               with_jukebox=False,
+               augment=False):
     """RecordProvider constructor."""
     super().__init__(sample_rate, frame_rate)
     self._file_pattern = file_pattern or self.default_file_pattern
     self._audio_length = example_secs * sample_rate
     self._audio_16k_length = example_secs * CREPE_SAMPLE_RATE
     self._feature_length = self.get_feature_length(centered)
+    self._example_secs = example_secs
+    self._with_jukebox = with_jukebox
+    self._centered = centered
+    self._augment = augment
+
+    if self._file_pattern.endswith("eval*"):
+      assert not augment, "Evaluation set should not use data augmentation"
+
+  def get_evaluation_set(self):
+    assert self._file_pattern.endswith(
+      "train*"), "This is not a training set, so there is no corresponding evaluation set"
+
+    eval_file_pattern = self._file_pattern[:-len("train*")] + "eval*"
+
+    return TFRecordProvider(
+      file_pattern=eval_file_pattern,
+      example_secs=self._example_secs,
+      sample_rate=self._sample_rate,
+      frame_rate=self._frame_rate,
+      centered=self._centered,
+      with_jukebox=self._with_jukebox,
+      augment=False,  # We don't want data augmentation for the evaluation set.
+    )
 
   def get_feature_length(self, centered):
     """Take into account center padding to get number of frames."""
@@ -256,7 +282,7 @@ class TFRecordProvider(DataProvider):
   @property
   def features_dict(self):
     """Dictionary of features to read from dataset."""
-    return {
+    res = {
         'audio':
             tf.io.FixedLenFeature([self._audio_length], dtype=tf.float32),
         'audio_16k':
@@ -269,6 +295,12 @@ class TFRecordProvider(DataProvider):
             tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
     }
 
+    if self._with_jukebox:
+      for i in range(jukebox.levels):
+        res[f'jukebox_indices_{i}'] = tf.io.FixedLenFeature(
+          [self._audio_16k_length // jukebox.strides[i] + 1], dtype=tf.float32)
+
+    return res
 
 @gin.register
 class LegacyTFRecordProvider(TFRecordProvider):

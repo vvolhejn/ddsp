@@ -167,10 +167,29 @@ class Trainer(object):
     with tf.GradientTape() as tape:
       outputs, losses = self.model(batch, return_losses=True, training=True)
     # Clip and apply gradients.
+    # logging.info("Outputs:", [(k, v.shape) for k, v in outputs.items()])
+
     grads = tape.gradient(losses['total_loss'], self.model.trainable_variables)
     grads, _ = tf.clip_by_global_norm(grads, self.grad_clip_norm)
     self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
     return outputs, losses
+
+  @tf.function
+  def eval_step(self, inputs):
+    """Distributed evaluation step."""
+    # Wrap iterator in tf.function, slight speedup passing in iter vs batch.
+    batch = next(inputs) if hasattr(inputs, '__next__') else inputs
+    losses = self.run(self.eval_step_fn, batch)
+    # Add up the scalar losses across replicas.
+    n_replicas = self.strategy.num_replicas_in_sync
+    losses_total = {k: self.psum(v, axis=None) / n_replicas for k, v in losses.items()}
+
+    return losses_total
+
+  @tf.function
+  def eval_step_fn(self, batch):
+    _outputs, losses = self.model(batch, return_losses=True, training=False)
+    return losses
 
 
 @gin.configurable

@@ -39,24 +39,28 @@ setuptools.setup(
     install_requires=[
         'absl-py',
         'cloudml-hypertune',
+        'codetiming==1.3',
         'crepe>=0.0.11',
         'future',
         'gin-config>=0.3.0',
         'google-cloud-storage',
-        'librosa',
+        'librosa ~= 0.9',
         'pydub',
-        'mir_eval',
+        'mir_eval >= 0.6',
         'note_seq',
-        'numba < 0.50',  # temporary fix for librosa import
+        # 'numba < 0.50',  # temporary fix for librosa import
         'numpy',
         'scipy',
         'six',
-        'tensorflow',
-        'tensorflow-addons',
-        'tensorflowjs',
-        'tensorflow-probability',
-        'tensorflow-datasets',
-        'tflite_support'
+        # 'tensorflow',
+        "tensorflow>=2; sys_platform != 'darwin' or platform_machine != 'arm64'",
+        "tensorflow-macos>=2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+        'tensorflow-addons ~= 0.16',
+        # 'tensorflowjs ~= 3.13',
+        'tensorflow-probability ~= 0.16',
+        'tensorflow-datasets ~= 4.5',
+        'tflite_support',
+        'wandb',
     ],
     extras_require={
         'gcp': [
