@@ -187,6 +187,8 @@ def _eval_split_partition_fn(example, num_partitions, eval_fraction, all_ids):
   del num_partitions
   example_id = example[0]
   eval_range = int(len(all_ids) * eval_fraction)
+  # The IDs are hashes, so sorting them means a random selection
+  all_ids.sort()
   for i in range(eval_range):
     if all_ids[i] == example_id:
       return 0
