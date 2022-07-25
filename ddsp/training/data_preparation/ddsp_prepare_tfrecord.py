@@ -75,6 +75,9 @@ flags.DEFINE_boolean(
 flags.DEFINE_boolean(
     'viterbi', True,
     'Use viterbi decoding of pitch.')
+flags.DEFINE_boolean(
+    'jukebox', False,
+    'Add embeddings from OpenAI\'s Jukebox model.')
 flags.DEFINE_list(
     'pipeline_options', '--runner=DirectRunner',
     'A comma-separated list of command line arguments to be used as options '
@@ -98,7 +101,10 @@ def run():
       chunk_secs=FLAGS.chunk_secs,
       center=FLAGS.center,
       viterbi=FLAGS.viterbi,
+      use_jukebox=FLAGS.jukebox,
       pipeline_options=FLAGS.pipeline_options)
+
+  print("Done.")
 
 
 def main(unused_argv):

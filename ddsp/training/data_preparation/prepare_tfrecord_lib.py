@@ -24,6 +24,7 @@ import tensorflow.compat.v2 as tf
 from ddsp.training import jukebox
 
 CREPE_SAMPLE_RATE = spectral_ops.CREPE_SAMPLE_RATE  # 16kHz.
+JUKEBOX_SAMPLE_RATE = jukebox.sample_rate
 
 
 def _load_audio_as_array(audio_path, sample_rate):
@@ -64,7 +65,10 @@ def _load_audio(audio_path, sample_rate):
     audio_16k = _load_audio_as_array(audio_path, CREPE_SAMPLE_RATE)
   else:
     audio_16k = audio
-  return {'audio': audio, 'audio_16k': audio_16k}
+
+  audio_44k = _load_audio_as_array(audio_path, JUKEBOX_SAMPLE_RATE)
+
+  return {'audio': audio, 'audio_16k': audio_16k, 'audio_44k': audio_44k}
 
 
 def _chunk_audio(ex, sample_rate, chunk_secs):
@@ -76,10 +80,14 @@ def _chunk_audio(ex, sample_rate, chunk_secs):
 
   chunks = get_chunks(ex['audio'], sample_rate)
   chunks_16k = get_chunks(ex['audio_16k'], CREPE_SAMPLE_RATE)
+  chunks_44k = get_chunks(ex['audio_44k'], JUKEBOX_SAMPLE_RATE)
+
   assert chunks.shape[0] == chunks_16k.shape[0]
+  assert chunks.shape[0] == chunks_44k.shape[0]
+
   n_chunks = chunks.shape[0]
   for i in range(n_chunks):
-    yield {'audio': chunks[i], 'audio_16k': chunks_16k[i]}
+    yield {'audio': chunks[i], 'audio_16k': chunks_16k[i], 'audio_44k': chunks_44k[i]}
 
 
 def _add_f0_estimate(ex, frame_rate, center, viterbi):
@@ -99,13 +107,11 @@ def _add_f0_estimate(ex, frame_rate, center, viterbi):
 
 def _add_jukebox_embeddings(ex):
   beam.metrics.Metrics.counter('prepare-tfrecord', 'compute-jukebox-encodings').inc()
-  audio = ex['audio_16k']
-
-  import ddsp.training.jukebox
+  audio = ex['audio_44k']
 
   # encodings is a list of three elements, one per encoding level.
   # The downsampling rates are 8, 32, 128
-  embeddings = ddsp.training.jukebox.encode(audio)
+  embeddings = jukebox.encode(audio)
 
   ex = dict(ex)
 
@@ -130,7 +136,7 @@ def _add_loudness(ex, frame_rate, n_fft, center):
   return ex
 
 
-def _split_example(ex, sample_rate, frame_rate, example_secs, hop_secs, center):
+def _split_example(ex, sample_rate, frame_rate, example_secs, hop_secs, center, use_jukebox):
   """Splits example into windows, padding final window if needed."""
 
   def get_windows(sequence, rate, center):
@@ -145,26 +151,43 @@ def _split_example(ex, sample_rate, frame_rate, example_secs, hop_secs, center):
       end = start + window_size
       yield sequence[start:end]
 
-  for audio, audio_16k, loudness_db, f0_hz, f0_confidence, je0, je1, je2 in zip(
-      get_windows(ex['audio'], sample_rate, center=False),
-      get_windows(ex['audio_16k'], CREPE_SAMPLE_RATE, center=False),
-      get_windows(ex['loudness_db'], frame_rate, center),
-      get_windows(ex['f0_hz'], frame_rate, center),
-      get_windows(ex['f0_confidence'], frame_rate, center),
-      get_windows(ex['jukebox_indices'][0], sample_rate // jukebox.strides[0], center),
-      get_windows(ex['jukebox_indices'][1], sample_rate // jukebox.strides[1], center),
-      get_windows(ex['jukebox_indices'][2], sample_rate // jukebox.strides[2], center)):
+  iterables = [
+    get_windows(ex['audio'], sample_rate, center=False),
+    get_windows(ex['audio_16k'], CREPE_SAMPLE_RATE, center=False),
+    get_windows(ex['audio_44k'], JUKEBOX_SAMPLE_RATE, center=False),
+    get_windows(ex['loudness_db'], frame_rate, center),
+    get_windows(ex['f0_hz'], frame_rate, center),
+    get_windows(ex['f0_confidence'], frame_rate, center),
+  ]
+
+  if use_jukebox:
+    iterables += [
+      get_windows(ex['jukebox_indices'][0], JUKEBOX_SAMPLE_RATE // jukebox.strides[0], center),
+      get_windows(ex['jukebox_indices'][1], JUKEBOX_SAMPLE_RATE // jukebox.strides[1], center),
+      get_windows(ex['jukebox_indices'][2], JUKEBOX_SAMPLE_RATE // jukebox.strides[2], center),
+    ]
+
+  for cur in zip(*iterables):
     beam.metrics.Metrics.counter('prepare-tfrecord', 'split-example').inc()
-    yield {
+
+    audio, audio_16k, audio_44k, loudness_db, f0_hz, f0_confidence = cur[:6]
+
+    cur_value = {
         'audio': audio,
         'audio_16k': audio_16k,
+        'audio_44k': audio_44k,
         'loudness_db': loudness_db,
         'f0_hz': f0_hz,
         'f0_confidence': f0_confidence,
-        'jukebox_indices_0': je0,
-        'jukebox_indices_1': je1,
-        'jukebox_indices_2': je2,
     }
+
+    if use_jukebox:
+      je0, je1, je2 = cur[6:9]
+      cur_value['jukebox_indices_0'] = je0
+      cur_value['jukebox_indices_1'] = je1
+      cur_value['jukebox_indices_2'] = je2
+
+    yield cur_value
 
 
 def _float_dict_to_tfexample(float_dict):
@@ -206,6 +229,7 @@ def prepare_tfrecord(input_audio_paths,
                      chunk_secs=20.0,
                      center=False,
                      viterbi=True,
+                     use_jukebox=False,
                      pipeline_options=''):
   """Prepares a TFRecord for use in training, evaluation, and prediction.
 
@@ -245,7 +269,8 @@ def prepare_tfrecord(input_audio_paths,
           frame_rate=frame_rate,
           example_secs=example_secs,
           hop_secs=hop_secs,
-          center=center)
+          center=center,
+          use_jukebox=use_jukebox)
     _ = (
         examples
         | f'reshuffle{stage_name}' >> beam.Reshuffle()
@@ -282,8 +307,10 @@ def prepare_tfrecord(input_audio_paths,
           | beam.Map(_add_loudness,
                      frame_rate=frame_rate,
                      n_fft=512,
-                     center=center)
-          | beam.Map(_add_jukebox_embeddings))
+                     center=center))
+
+    if use_jukebox:
+      examples = examples | beam.Map(_add_jukebox_embeddings)
 
     # Create train/eval split.
     if eval_split_fraction:

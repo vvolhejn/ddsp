@@ -78,7 +78,7 @@ class Autoencoder(Model):
 
     if training or True:
       self._update_losses_dict(
-        self.loss_objs, features['audio'], outputs['audio_synth'])
+        self.loss_objs, features['audio_16k'], outputs['audio_synth'])
 
     return outputs
 

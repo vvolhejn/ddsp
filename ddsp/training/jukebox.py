@@ -12,6 +12,7 @@ vqvae: Optional[VQVAE] = None
 levels = 3
 strides = (8, 32, 128)
 embeddings_params = None
+sample_rate = 44100
 
 def setup():
   global vqvae, embeddings_params

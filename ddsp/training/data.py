@@ -24,7 +24,6 @@ import gin
 import tensorflow.compat.v2 as tf
 import tensorflow_datasets as tfds
 
-
 _AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 
@@ -56,11 +55,7 @@ class DataProvider(object):
     """A method that returns a tf.data.Dataset."""
     raise NotImplementedError
 
-  def get_batch(self,
-                batch_size,
-                shuffle=True,
-                repeats=-1,
-                drop_remainder=True):
+  def get_batch(self, batch_size, shuffle=True, repeats=-1, drop_remainder=True):
     """Read dataset.
 
     Args:
@@ -129,11 +124,12 @@ class TfdsProvider(DataProvider):
       dataset: A tf.data.Dataset that reads from TFDS.
     """
     return tfds.load(
-        self._name,
-        data_dir=self._data_dir,
-        split=self._split,
-        shuffle_files=shuffle,
-        download=False)
+      self._name,
+      data_dir=self._data_dir,
+      split=self._split,
+      shuffle_files=shuffle,
+      download=False,
+    )
 
 
 @gin.register
@@ -144,13 +140,15 @@ class NSynthTfds(TfdsProvider):
   'gs://tfds-data/datasets' to avoid unnecessary downloads.
   """
 
-  def __init__(self,
-               name='nsynth/gansynth_subset.f0_and_loudness:2.3.0',
-               split='train',
-               data_dir='gs://tfds-data/datasets',
-               sample_rate=16000,
-               frame_rate=250,
-               include_note_labels=True):
+  def __init__(
+          self,
+          name="nsynth/gansynth_subset.f0_and_loudness:2.3.0",
+          split="train",
+          data_dir="gs://tfds-data/datasets",
+          sample_rate=16000,
+          frame_rate=250,
+          include_note_labels=True,
+  ):
     """TfdsProvider constructor.
 
     Args:
@@ -164,37 +162,33 @@ class NSynthTfds(TfdsProvider):
         (pitch, instrument).
     """
     self._include_note_labels = include_note_labels
-    if data_dir == 'gs://tfds-data/datasets':
+    if data_dir == "gs://tfds-data/datasets":
       logging.warning(
-          'Using public TFDS GCS bucket to load NSynth. If not running on '
-          'GCP, this will be very slow, and it is recommended you prepare '
-          'the dataset locally with TFDS and set the data_dir appropriately.')
+        "Using public TFDS GCS bucket to load NSynth. If not running on "
+        "GCP, this will be very slow, and it is recommended you prepare "
+        "the dataset locally with TFDS and set the data_dir appropriately."
+      )
     super().__init__(name, split, data_dir, sample_rate, frame_rate)
 
   def get_dataset(self, shuffle=True):
     """Returns dataset with slight restructuring of feature dictionary."""
+
     def preprocess_ex(ex):
       ex_out = {
-          'audio':
-              ex['audio'],
-          'f0_hz':
-              ex['f0']['hz'],
-          'f0_confidence':
-              ex['f0']['confidence'],
-          'loudness_db':
-              ex['loudness']['db'],
+        "audio": ex["audio"],
+        "f0_hz": ex["f0"]["hz"],
+        "f0_confidence": ex["f0"]["confidence"],
+        "loudness_db": ex["loudness"]["db"],
       }
       if self._include_note_labels:
-        ex_out.update({
-            'pitch':
-                ex['pitch'],
-            'instrument_source':
-                ex['instrument']['source'],
-            'instrument_family':
-                ex['instrument']['family'],
-            'instrument':
-                ex['instrument']['label'],
-        })
+        ex_out.update(
+          {
+            "pitch": ex["pitch"],
+            "instrument_source": ex["instrument"]["source"],
+            "instrument_family": ex["instrument"]["family"],
+            "instrument": ex["instrument"]["label"],
+          }
+        )
       return ex_out
 
     dataset = super().get_dataset(shuffle)
@@ -206,19 +200,22 @@ class NSynthTfds(TfdsProvider):
 class TFRecordProvider(DataProvider):
   """Class for reading TFRecords and returning a dataset."""
 
-  def __init__(self,
-               file_pattern=None,
-               example_secs=4,
-               sample_rate=16000,
-               frame_rate=250,
-               centered=False,
-               with_jukebox=False,
-               augment=False):
+  def __init__(
+          self,
+          file_pattern=None,
+          example_secs=4,
+          sample_rate=16000,
+          frame_rate=250,
+          centered=False,
+          with_jukebox=False,
+          augment=False,
+  ):
     """RecordProvider constructor."""
     super().__init__(sample_rate, frame_rate)
     self._file_pattern = file_pattern or self.default_file_pattern
     self._audio_length = example_secs * sample_rate
     self._audio_16k_length = example_secs * CREPE_SAMPLE_RATE
+    self._audio_44k_length = example_secs * jukebox.sample_rate
     self._feature_length = self.get_feature_length(centered)
     self._example_secs = example_secs
     self._with_jukebox = with_jukebox
@@ -230,9 +227,10 @@ class TFRecordProvider(DataProvider):
 
   def get_evaluation_set(self):
     assert self._file_pattern.endswith(
-      "train*"), "This is not a training set, so there is no corresponding evaluation set"
+      "train*"
+    ), f"This is not a training set, so there is no corresponding evaluation set: {self._file_pattern}"
 
-    eval_file_pattern = self._file_pattern[:-len("train*")] + "eval*"
+    eval_file_pattern = self._file_pattern[: -len("train*")] + "eval*"
 
     return TFRecordProvider(
       file_pattern=eval_file_pattern,
@@ -248,16 +246,18 @@ class TFRecordProvider(DataProvider):
     """Take into account center padding to get number of frames."""
     # Number of frames is independent of frame size for "center/same" padding.
     hop_size = CREPE_SAMPLE_RATE / self.frame_rate
-    padding = 'center' if centered else 'same'
+    padding = "center" if centered else "same"
     return get_framed_lengths(
-        self._audio_16k_length, CREPE_FRAME_SIZE, hop_size, padding)[0]
+      self._audio_16k_length, CREPE_FRAME_SIZE, hop_size, padding
+    )[0]
 
   @property
   def default_file_pattern(self):
     """Used if file_pattern is not provided to constructor."""
     raise NotImplementedError(
-        'You must pass a "file_pattern" argument to the constructor or '
-        'choose a FileDataProvider with a default_file_pattern.')
+      'You must pass a "file_pattern" argument to the constructor or '
+      "choose a FileDataProvider with a default_file_pattern."
+    )
 
   def get_dataset(self, shuffle=True):
     """Read dataset.
@@ -268,14 +268,16 @@ class TFRecordProvider(DataProvider):
     Returns:
       dataset: A tf.dataset that reads from the TFRecord.
     """
+
     def parse_tfexample(record):
       return tf.io.parse_single_example(record, self.features_dict)
 
     filenames = tf.data.Dataset.list_files(self._file_pattern, shuffle=shuffle)
     dataset = filenames.interleave(
-        map_func=tf.data.TFRecordDataset,
-        cycle_length=40,
-        num_parallel_calls=_AUTOTUNE)
+      map_func=tf.data.TFRecordDataset,
+      cycle_length=40,
+      num_parallel_calls=_AUTOTUNE,
+    )
     dataset = dataset.map(parse_tfexample, num_parallel_calls=_AUTOTUNE)
     return dataset
 
@@ -283,24 +285,31 @@ class TFRecordProvider(DataProvider):
   def features_dict(self):
     """Dictionary of features to read from dataset."""
     res = {
-        'audio':
-            tf.io.FixedLenFeature([self._audio_length], dtype=tf.float32),
-        'audio_16k':
-            tf.io.FixedLenFeature([self._audio_16k_length], dtype=tf.float32),
-        'f0_hz':
-            tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
-        'f0_confidence':
-            tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
-        'loudness_db':
-            tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
+      "audio": tf.io.FixedLenFeature([self._audio_length], dtype=tf.float32),
+      "audio_16k": tf.io.FixedLenFeature(
+        [self._audio_16k_length], dtype=tf.float32
+      ),
+      "f0_hz": tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
+      "f0_confidence": tf.io.FixedLenFeature(
+        [self._feature_length], dtype=tf.float32
+      ),
+      "loudness_db": tf.io.FixedLenFeature(
+        [self._feature_length], dtype=tf.float32
+      ),
     }
 
     if self._with_jukebox:
       for i in range(jukebox.levels):
-        res[f'jukebox_indices_{i}'] = tf.io.FixedLenFeature(
-          [self._audio_16k_length // jukebox.strides[i] + 1], dtype=tf.float32)
+        res[f"jukebox_indices_{i}"] = tf.io.FixedLenFeature(
+          [get_framed_lengths(self._audio_44k_length, jukebox.strides[i],
+                              jukebox.strides[i],
+                              padding="center" if self._centered else "same")[0]],
+          # [self._audio_44k_length // jukebox.strides[i] + 1],
+          dtype=tf.float32,
+        )
 
     return res
+
 
 @gin.register
 class LegacyTFRecordProvider(TFRecordProvider):
@@ -310,15 +319,66 @@ class LegacyTFRecordProvider(TFRecordProvider):
   def features_dict(self):
     """Dictionary of features to read from dataset."""
     return {
-        'audio':
-            tf.io.FixedLenFeature([self._audio_length], dtype=tf.float32),
-        'f0_hz':
-            tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
-        'f0_confidence':
-            tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
-        'loudness_db':
-            tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
+      "audio": tf.io.FixedLenFeature([self._audio_length], dtype=tf.float32),
+      "f0_hz": tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
+      "f0_confidence": tf.io.FixedLenFeature(
+        [self._feature_length], dtype=tf.float32
+      ),
+      "loudness_db": tf.io.FixedLenFeature(
+        [self._feature_length], dtype=tf.float32
+      ),
     }
+
+
+@gin.register
+class WandbTFRecordProvider(TFRecordProvider):
+
+  def __init__(self, artifact_name, file_suffix=None, **kwargs):
+    self._artifact_name = artifact_name
+    assert file_suffix in [None, "train", "eval"]
+    self._file_suffix = file_suffix
+    self._kwargs = kwargs
+    self._initialized = False
+
+  def get_dataset(self, shuffle=True):
+    self._init()
+    return super().get_dataset(shuffle)
+
+  def get_evaluation_set(self):
+    self._init()
+    return super().get_evaluation_set()
+
+  def _init(self):
+    if self._initialized:
+      return
+
+    import wandb
+    artifact = wandb.run.use_artifact(self._artifact_name, type="dataset")
+    artifact_dir = artifact.download()
+    assert str(artifact_dir) != '', "Dataset was not downloaded from W&B, is W&B enabled?"
+
+    provider_keys = [
+      "example_secs",
+      "sample_rate",
+      "frame_rate",
+      "centered",
+      "with_jukebox",
+    ]
+    args = {k: v for k, v in artifact.metadata.items() if k in provider_keys}
+
+    # Override with explicitly specified arguments
+    for k, v in self._kwargs.items():
+      args[k] = v
+
+    pattern = "*.tfrecord"
+    if self._file_suffix:
+      pattern += "-" + self._file_suffix
+    pattern += "*"
+
+    print(args, os.path.join(artifact_dir, pattern))
+
+    super().__init__(file_pattern=os.path.join(artifact_dir, pattern), **args)
+    self._initialized = True
 
 
 # ------------------------------------------------------------------------------
@@ -340,10 +400,11 @@ class BaseMultiProvider(DataProvider):
     if batch_size_ratios:
       # Check lengths match.
       if len(batch_size_ratios) != len(data_providers):
-        raise ValueError('List of batch size ratios ({}) must be of the same '
-                         'length as the list of data providers ({}) for varying'
-                         'batch sizes.'.format(
-                             len(batch_size_ratios), len(data_providers)))
+        raise ValueError(
+          "List of batch size ratios ({}) must be of the same "
+          "length as the list of data providers ({}) for varying"
+          "batch sizes.".format(len(batch_size_ratios), len(data_providers))
+        )
       # Normalize the ratios.
       total = sum(batch_size_ratios)
       batch_size_ratios = [float(bsr) / total for bsr in batch_size_ratios]
@@ -382,11 +443,7 @@ class ZippedProvider(BaseMultiProvider):
     datasets = tuple(dp.get_dataset(shuffle) for dp in self._data_providers)
     return tf.data.Dataset.zip(datasets)
 
-  def get_batch(self,
-                batch_size,
-                shuffle=True,
-                repeats=-1,
-                drop_remainder=False):
+  def get_batch(self, batch_size, shuffle=True, repeats=-1, drop_remainder=False):
     """Read dataset.
 
     Args:
@@ -406,8 +463,9 @@ class ZippedProvider(BaseMultiProvider):
       # Varying batch sizes (Integer batch shape for each).
       batch_sizes = [int(batch_size * bsr) for bsr in self._batch_size_ratios]
       datasets = tuple(
-          dp.get_dataset(shuffle).batch(bs, drop_remainder=drop_remainder)
-          for bs, dp in zip(batch_sizes, self._data_providers))
+        dp.get_dataset(shuffle).batch(bs, drop_remainder=drop_remainder)
+        for bs, dp in zip(batch_sizes, self._data_providers)
+      )
       dataset = tf.data.Dataset.zip(datasets)
       dataset = dataset.repeat(repeats)
       dataset = dataset.prefetch(buffer_size=_AUTOTUNE)
@@ -429,7 +487,8 @@ class MixedProvider(BaseMultiProvider):
     """
     datasets = tuple(dp.get_dataset(shuffle) for dp in self._data_providers)
     return tf.data.experimental.sample_from_datasets(
-        datasets, self._batch_size_ratios)
+      datasets, self._batch_size_ratios
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -444,12 +503,9 @@ class SyntheticNotes(LegacyTFRecordProvider):
   Pass file_pattern to tfrecords created by `ddsp_generate_synthetic_data.py`.
   """
 
-  def __init__(self,
-               n_timesteps,
-               n_harmonics,
-               n_mags,
-               file_pattern=None,
-               sample_rate=16000):
+  def __init__(
+          self, n_timesteps, n_harmonics, n_mags, file_pattern=None, sample_rate=16000
+  ):
     self.n_timesteps = n_timesteps
     self.n_harmonics = n_harmonics
     self.n_mags = n_mags
@@ -459,22 +515,20 @@ class SyntheticNotes(LegacyTFRecordProvider):
   def features_dict(self):
     """Dictionary of features to read from dataset."""
     return {
-        'f0_hz':
-            tf.io.FixedLenFeature([self.n_timesteps, 1], dtype=tf.float32),
-        'harm_amp':
-            tf.io.FixedLenFeature([self.n_timesteps, 1], dtype=tf.float32),
-        'harm_dist':
-            tf.io.FixedLenFeature(
-                [self.n_timesteps, self.n_harmonics], dtype=tf.float32),
-        'sin_amps':
-            tf.io.FixedLenFeature(
-                [self.n_timesteps, self.n_harmonics], dtype=tf.float32),
-        'sin_freqs':
-            tf.io.FixedLenFeature(
-                [self.n_timesteps, self.n_harmonics], dtype=tf.float32),
-        'noise_magnitudes':
-            tf.io.FixedLenFeature(
-                [self.n_timesteps, self.n_mags], dtype=tf.float32),
+      "f0_hz": tf.io.FixedLenFeature([self.n_timesteps, 1], dtype=tf.float32),
+      "harm_amp": tf.io.FixedLenFeature([self.n_timesteps, 1], dtype=tf.float32),
+      "harm_dist": tf.io.FixedLenFeature(
+        [self.n_timesteps, self.n_harmonics], dtype=tf.float32
+      ),
+      "sin_amps": tf.io.FixedLenFeature(
+        [self.n_timesteps, self.n_harmonics], dtype=tf.float32
+      ),
+      "sin_freqs": tf.io.FixedLenFeature(
+        [self.n_timesteps, self.n_harmonics], dtype=tf.float32
+      ),
+      "noise_magnitudes": tf.io.FixedLenFeature(
+        [self.n_timesteps, self.n_mags], dtype=tf.float32
+      ),
     }
 
 
@@ -482,11 +536,7 @@ class SyntheticNotes(LegacyTFRecordProvider):
 class Urmp(LegacyTFRecordProvider):
   """Urmp training set."""
 
-  def __init__(self,
-               base_dir,
-               instrument_key='tpt',
-               split='train',
-               suffix=None):
+  def __init__(self, base_dir, instrument_key="tpt", split="train", suffix=None):
     """URMP dataset for either a specific instrument or all instruments.
 
     Args:
@@ -508,17 +558,19 @@ class Urmp(LegacyTFRecordProvider):
     self.instrument_key = instrument_key
     self.split = split
     self.base_dir = base_dir
-    self.suffix = '' if suffix is None else '_' + suffix
+    self.suffix = "" if suffix is None else "_" + suffix
     super().__init__()
 
   @property
   def default_file_pattern(self):
-    if self.instrument_key == 'all':
-      file_pattern = 'all_instruments_{}{}.tfrecord*'.format(
-          self.split, self.suffix)
+    if self.instrument_key == "all":
+      file_pattern = "all_instruments_{}{}.tfrecord*".format(
+        self.split, self.suffix
+      )
     else:
-      file_pattern = 'urmp_{}_solo_ddsp_conditioning_{}{}.tfrecord*'.format(
-          self.instrument_key, self.split, self.suffix)
+      file_pattern = "urmp_{}_solo_ddsp_conditioning_{}{}.tfrecord*".format(
+        self.instrument_key, self.split, self.suffix
+      )
 
     return os.path.join(self.base_dir, file_pattern)
 
@@ -532,52 +584,71 @@ class UrmpMidi(Urmp):
   piece of URMP recording, please use `UrmpMidiUnsegmented` class instead.
   """
 
-  _INSTRUMENTS = ['vn', 'va', 'vc', 'db', 'fl', 'ob', 'cl', 'sax', 'bn', 'tpt',
-                  'hn', 'tbn', 'tba']
+  _INSTRUMENTS = [
+    "vn",
+    "va",
+    "vc",
+    "db",
+    "fl",
+    "ob",
+    "cl",
+    "sax",
+    "bn",
+    "tpt",
+    "hn",
+    "tbn",
+    "tba",
+  ]
 
   @property
   def features_dict(self):
     base_features = super().features_dict
-    base_features.update({
-        'note_active_velocities':
-            tf.io.FixedLenFeature([self._feature_length * 128], tf.float32),
-        'note_active_frame_indices':
-            tf.io.FixedLenFeature([self._feature_length * 128], tf.float32),
-        'instrument_id': tf.io.FixedLenFeature([], tf.string),
-        'recording_id': tf.io.FixedLenFeature([], tf.string),
-        'power_db':
-            tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
-        'note_onsets':
-            tf.io.FixedLenFeature([self._feature_length * 128],
-                                  dtype=tf.float32),
-        'note_offsets':
-            tf.io.FixedLenFeature([self._feature_length * 128],
-                                  dtype=tf.float32),
-    })
+    base_features.update(
+      {
+        "note_active_velocities": tf.io.FixedLenFeature(
+          [self._feature_length * 128], tf.float32
+        ),
+        "note_active_frame_indices": tf.io.FixedLenFeature(
+          [self._feature_length * 128], tf.float32
+        ),
+        "instrument_id": tf.io.FixedLenFeature([], tf.string),
+        "recording_id": tf.io.FixedLenFeature([], tf.string),
+        "power_db": tf.io.FixedLenFeature(
+          [self._feature_length], dtype=tf.float32
+        ),
+        "note_onsets": tf.io.FixedLenFeature(
+          [self._feature_length * 128], dtype=tf.float32
+        ),
+        "note_offsets": tf.io.FixedLenFeature(
+          [self._feature_length * 128], dtype=tf.float32
+        ),
+      }
+    )
     return base_features
 
   def get_dataset(self, shuffle=True):
-
     instrument_ids = range(len(self._INSTRUMENTS))
     inst_vocab = tf.lookup.StaticHashTable(
-        tf.lookup.KeyValueTensorInitializer(self._INSTRUMENTS, instrument_ids),
-        -1)
+      tf.lookup.KeyValueTensorInitializer(self._INSTRUMENTS, instrument_ids), -1
+    )
 
     def _reshape_tensors(data):
-      data['note_active_frame_indices'] = tf.reshape(
-          data['note_active_frame_indices'], (-1, 128))
-      data['note_active_velocities'] = tf.reshape(
-          data['note_active_velocities'], (-1, 128))
-      data['instrument_id'] = inst_vocab.lookup(data['instrument_id'])
-      data['midi'] = tf.argmax(data['note_active_frame_indices'], axis=-1)
-      data['f0_hz'] = data['f0_hz'][..., tf.newaxis]
-      data['loudness_db'] = data['loudness_db'][..., tf.newaxis]
-      onsets = tf.reduce_sum(
-          tf.reshape(data['note_onsets'], (-1, 128)), axis=-1)
-      data['onsets'] = tf.cast(onsets > 0, tf.int64)
+      data["note_active_frame_indices"] = tf.reshape(
+        data["note_active_frame_indices"], (-1, 128)
+      )
+      data["note_active_velocities"] = tf.reshape(
+        data["note_active_velocities"], (-1, 128)
+      )
+      data["instrument_id"] = inst_vocab.lookup(data["instrument_id"])
+      data["midi"] = tf.argmax(data["note_active_frame_indices"], axis=-1)
+      data["f0_hz"] = data["f0_hz"][..., tf.newaxis]
+      data["loudness_db"] = data["loudness_db"][..., tf.newaxis]
+      onsets = tf.reduce_sum(tf.reshape(data["note_onsets"], (-1, 128)), axis=-1)
+      data["onsets"] = tf.cast(onsets > 0, tf.int64)
       offsets = tf.reduce_sum(
-          tf.reshape(data['note_offsets'], (-1, 128)), axis=-1)
-      data['offsets'] = tf.cast(offsets > 0, tf.int64)
+        tf.reshape(data["note_offsets"], (-1, 128)), axis=-1
+      )
+      data["offsets"] = tf.cast(offsets > 0, tf.int64)
 
       return data
 
@@ -593,68 +664,75 @@ class UrmpMidiUnsegmented(Urmp):
   chunks as in UrmpMidi dataset.
   """
 
-  _INSTRUMENTS = ['vn', 'va', 'vc', 'db', 'fl', 'ob', 'cl', 'sax', 'bn', 'tpt',
-                  'hn', 'tbn', 'tba']
+  _INSTRUMENTS = [
+    "vn",
+    "va",
+    "vc",
+    "db",
+    "fl",
+    "ob",
+    "cl",
+    "sax",
+    "bn",
+    "tpt",
+    "hn",
+    "tbn",
+    "tba",
+  ]
 
   @property
   def features_dict(self):
     base_features = {
-        'audio':
-            tf.io.VarLenFeature(dtype=tf.float32),
-        'f0_hz':
-            tf.io.VarLenFeature(dtype=tf.float32),
-        'f0_confidence':
-            tf.io.VarLenFeature(dtype=tf.float32),
-        'loudness_db':
-            tf.io.VarLenFeature(dtype=tf.float32),
+      "audio": tf.io.VarLenFeature(dtype=tf.float32),
+      "f0_hz": tf.io.VarLenFeature(dtype=tf.float32),
+      "f0_confidence": tf.io.VarLenFeature(dtype=tf.float32),
+      "loudness_db": tf.io.VarLenFeature(dtype=tf.float32),
     }
-    base_features.update({
-        'note_active_velocities':
-            tf.io.VarLenFeature(tf.float32),
-        'note_active_frame_indices':
-            tf.io.VarLenFeature(tf.float32),
-        'instrument_id': tf.io.FixedLenFeature([], tf.string),
-        'recording_id': tf.io.FixedLenFeature([], tf.string),
-        'power_db':
-            tf.io.VarLenFeature(dtype=tf.float32),
-        'note_onsets':
-            tf.io.VarLenFeature(dtype=tf.float32),
-        'note_offsets':
-            tf.io.VarLenFeature(dtype=tf.float32),
-    })
+    base_features.update(
+      {
+        "note_active_velocities": tf.io.VarLenFeature(tf.float32),
+        "note_active_frame_indices": tf.io.VarLenFeature(tf.float32),
+        "instrument_id": tf.io.FixedLenFeature([], tf.string),
+        "recording_id": tf.io.FixedLenFeature([], tf.string),
+        "power_db": tf.io.VarLenFeature(dtype=tf.float32),
+        "note_onsets": tf.io.VarLenFeature(dtype=tf.float32),
+        "note_offsets": tf.io.VarLenFeature(dtype=tf.float32),
+      }
+    )
     return base_features
 
   def get_dataset(self, shuffle=True):
     instrument_ids = range(len(self._INSTRUMENTS))
     inst_vocab = tf.lookup.StaticHashTable(
-        tf.lookup.KeyValueTensorInitializer(
-            self._INSTRUMENTS, instrument_ids), -1)
+      tf.lookup.KeyValueTensorInitializer(self._INSTRUMENTS, instrument_ids), -1
+    )
 
     def _reshape_tensors(data):
-      data['audio'] = tf.sparse.to_dense(data['audio'])
-      data['note_active_frame_indices'] = tf.reshape(
-          tf.sparse.to_dense(data['note_active_frame_indices']), (-1, 128))
-      data['note_active_velocities'] = tf.reshape(
-          tf.sparse.to_dense(data['note_active_velocities']), (-1, 128))
-      data['instrument_id'] = inst_vocab.lookup(data['instrument_id'])
-      data['midi'] = tf.argmax(data['note_active_frame_indices'], axis=-1)
-      data['f0_hz'] = tf.sparse.to_dense(data['f0_hz'])[..., tf.newaxis]
-      data['loudness_db'] = tf.sparse.to_dense(data['loudness_db'])[
-          ..., tf.newaxis]
+      data["audio"] = tf.sparse.to_dense(data["audio"])
+      data["note_active_frame_indices"] = tf.reshape(
+        tf.sparse.to_dense(data["note_active_frame_indices"]), (-1, 128)
+      )
+      data["note_active_velocities"] = tf.reshape(
+        tf.sparse.to_dense(data["note_active_velocities"]), (-1, 128)
+      )
+      data["instrument_id"] = inst_vocab.lookup(data["instrument_id"])
+      data["midi"] = tf.argmax(data["note_active_frame_indices"], axis=-1)
+      data["f0_hz"] = tf.sparse.to_dense(data["f0_hz"])[..., tf.newaxis]
+      data["loudness_db"] = tf.sparse.to_dense(data["loudness_db"])[
+        ..., tf.newaxis
+      ]
       # reshape and rename things
       onsets = tf.reduce_sum(
-          tf.reshape(tf.sparse.to_dense(data['note_onsets']), (-1, 128)),
-          axis=-1)
-      data['onsets'] = tf.cast(onsets > 0, tf.int64)
+        tf.reshape(tf.sparse.to_dense(data["note_onsets"]), (-1, 128)), axis=-1
+      )
+      data["onsets"] = tf.cast(onsets > 0, tf.int64)
       offsets = tf.reduce_sum(
-          tf.reshape(tf.sparse.to_dense(data['note_offsets']), (-1, 128)),
-          axis=-1)
-      data['offsets'] = tf.cast(offsets > 0, tf.int64)
+        tf.reshape(tf.sparse.to_dense(data["note_offsets"]), (-1, 128)), axis=-1
+      )
+      data["offsets"] = tf.cast(offsets > 0, tf.int64)
 
       return data
 
     ds = super().get_dataset(shuffle)
     ds = ds.map(_reshape_tensors, num_parallel_calls=_AUTOTUNE)
     return ds
-
-

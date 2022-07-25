@@ -338,13 +338,6 @@ def train(
       for k, v in losses.items():
         avg_losses[k].update_state(v)
 
-      # Log the step.
-      if step % steps_per_summary == 0:
-        log_str = "step: {}\t".format(int(step.numpy()))
-        for k, v in avg_losses.items():
-          log_str += "{}: {:.2f}\t".format(k, v.result())
-        logging.info(log_str)
-
       # Write Summaries.
       if step % steps_per_summary == 0 and save_dir:
 
@@ -360,6 +353,18 @@ def train(
         steps_per_sec = steps_per_summary / (time.time() - tick)
         log_scalar("steps_per_sec", steps_per_sec)
         tick = time.time()
+
+        eval_losses = evaluate(trainer, eval_dataset_iter)
+        for k, v in eval_losses.items():
+          log_scalar(f"losses/eval_{k}", v)
+
+        if step % steps_per_summary == 0:
+          log_str = "step: {}\t".format(int(step.numpy()))
+          log_str += f"train_total_loss: {avg_losses['total_loss'].result():.2f}\t"
+          log_str += f"eval_total_loss: {eval_losses['total_loss']:.2f}\t"
+          # for k, v in avg_losses.items():
+          #   log_str += "{}: {:.2f}\t".format(k, v.result())
+          logging.info(log_str)
 
         # Metrics.
         for k, metric in avg_losses.items():
@@ -383,10 +388,6 @@ def train(
 
         if model_specific_summary_fn:
           model_specific_summary_fn(outputs, int(step.numpy()))
-
-        eval_losses = evaluate(trainer, eval_dataset_iter)
-        for k, v in eval_losses.items():
-          log_scalar(f"losses/eval_{k}", v)
 
       # Report metrics for hyperparameter tuning if enabled.
       if report_loss_to_hypertune:
@@ -416,7 +417,7 @@ def train(
   logging.info("Training Finished!")
 
 
-def evaluate(trainer: Trainer, dataset_iter, n_batches=10):
+def evaluate(trainer: Trainer, dataset_iter, n_batches=50):
   for i in range(n_batches):
     losses = trainer.eval_step(dataset_iter)
 

@@ -75,7 +75,7 @@ class F0LoudnessPreprocessor(nn.DictLayer):
     self.compute_loudness = compute_loudness
     self.compute_f0 = compute_f0
 
-  def call(self, loudness_db, f0_hz, f0_confidence, audio=None) -> [
+  def call(self, loudness_db, f0_hz, f0_confidence, audio_16k=None) -> [
       'f0_hz', 'loudness_db', 'f0_scaled', 'ld_scaled', 'f0_confidence']:
     # We have to pass f0_confidence for the case where `self.compute_f0` is off
     # and we need to return the original confidence unchanged.
@@ -83,18 +83,17 @@ class F0LoudnessPreprocessor(nn.DictLayer):
     # Compute loudness fresh (it's fast).
     if self.compute_loudness:
       loudness_db = ddsp.spectral_ops.compute_loudness(
-          audio,
+          audio_16k,
           sample_rate=self.sample_rate,
           frame_rate=self.frame_rate)
 
     # Recomputing f0 might be desirable if we want to include it in the timing info
     if self.compute_f0:
-      assert len(audio) == 1, "Batch size must be 1 when recomputing f0."
+      assert len(audio_16k) == 1, "Batch size must be 1 when recomputing f0."
 
       f0_hz, f0_confidence = ddsp.spectral_ops.compute_f0(
-          audio[0],
-          #frame_rate=self.frame_rate
-          frame_rate=32,
+        audio_16k[0],
+        frame_rate=self.frame_rate,
       )
 
     # Resample features to the frame_rate.
