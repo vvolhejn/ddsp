@@ -91,9 +91,12 @@ class F0LoudnessPreprocessor(nn.DictLayer):
     if self.compute_f0:
       assert len(audio_16k) == 1, "Batch size must be 1 when recomputing f0."
 
+      # The frame rate of the dataset's f0 estimate can be different than the framerate
+      # of the F0LoudnessPreprocessor, in which case the f0 signal is then resampled.
       f0_hz, f0_confidence = ddsp.spectral_ops.compute_f0(
         audio_16k[0],
-        frame_rate=self.frame_rate,
+        # frame_rate=self.frame_rate,
+        frame_rate=50,
       )
 
     # Resample features to the frame_rate.

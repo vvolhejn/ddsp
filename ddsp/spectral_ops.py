@@ -305,6 +305,8 @@ def compute_loudness(audio,
 
   # Perceptual weighting.
   frequencies = librosa.fft_frequencies(sr=sample_rate, n_fft=n_fft)
+  # Avoid 0 Hz because this leads to log(0). 1 Hz has almost no weight anyways.
+  frequencies[frequencies == 0.0] = 1.0
   a_weighting = librosa.A_weighting(frequencies)[lib.newaxis, lib.newaxis, :]
 
   # Perform weighting in linear scale, a_weighting given in decibels.

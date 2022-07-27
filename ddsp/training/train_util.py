@@ -175,20 +175,13 @@ def get_latest_operative_config(restore_dir):
       os.path.dirname(restore_dir), prefix="operative_config-", suffix=".gin"
     )
 
+def config_string_to_markdown(config_str):
 
-def write_gin_config(summary_writer, save_dir, step):
-  """ "Writes gin operative_config to save_dir and tensorboard."""
-  config_str = gin.operative_config_str()
-
-  # Save the original config string to a file.
-  base_name = "operative_config-{}".format(step)
-  fname = os.path.join(save_dir, base_name + ".gin")
-  with tf.io.gfile.GFile(fname, "w") as f:
-    f.write(config_str)
-
-  # Formatting hack copied from gin.tf.GinConfigSaverHook.
-  def format_for_tensorboard(line):
-    """Convert a single line to markdown format."""
+  def format_gin_for_tensorboard(line):
+    """
+    Convert a single line to markdown format.
+    Formatting hack copied from gin.tf.GinConfigSaverHook.
+    """
     if not line.startswith("#"):
       return "    " + line
     line = line[2:]
@@ -203,15 +196,29 @@ def write_gin_config(summary_writer, save_dir, step):
   # Convert config string to markdown.
   md_lines = []
   for line in config_str.splitlines():
-    md_line = format_for_tensorboard(line)
+    md_line = format_gin_for_tensorboard(line)
     if md_line is not None:
       md_lines.append(md_line)
   md_config_str = "\n".join(md_lines)
+  return md_config_str
+
+
+def write_gin_config(summary_writer, save_dir, step):
+  """ "Writes gin operative_config to save_dir and tensorboard."""
+  config_str = gin.operative_config_str()
+
+  # Save the original config string to a file.
+  base_name = "operative_config-{}".format(step)
+  fname = os.path.join(save_dir, base_name + ".gin")
+  with tf.io.gfile.GFile(fname, "w") as f:
+    f.write(config_str)
+
+  md_config_str = config_string_to_markdown(config_str)
 
   # Add to tensorboard.
   with summary_writer.as_default():
     text_tensor = tf.convert_to_tensor(md_config_str)
-    tf.summary.text(name="gin/" + base_name, data=text_tensor, step=step)
+    # tf.summary.text(name="gin/" + base_name, data=text_tensor, step=step)
     wandb.run.summary["gin/" + base_name] = md_config_str
     summary_writer.flush()
 
@@ -281,9 +288,12 @@ def train(
   eval_dataset = trainer.distribute_dataset(eval_dataset)
   eval_dataset_iter = iter(eval_dataset)
 
-
   # Build model, easiest to just run forward pass.
   trainer.build(next(dataset_iter))
+
+  dataset_name = os.path.basename(os.path.dirname(data_provider._file_pattern))
+  while dataset_name[-1] in "0123456789":
+    dataset_name = dataset_name[:-1]
 
   wandb_run = wandb.init(project="neural-audio-synthesis-thesis",
                          entity="neural-audio-synthesis-thesis",
@@ -291,7 +301,9 @@ def train(
                          # sync_tensorboard=True,
                          config=flag_values_dict,
                          dir="/cluster/scratch/vvolhejn/wandb",
-                         tags=["train"])
+                         tags=["train", dataset_name],
+                         settings=wandb.Settings(start_method="fork"),
+                         )
 
   # Load latest checkpoint if one exists in load directory.
   try:
@@ -302,16 +314,18 @@ def train(
       restore_dir,
     )
 
-  if save_dir:
-    # Set up the summary writer and metrics.
-    summary_dir = os.path.join(save_dir, "summaries", "train")
-    summary_writer = tf.summary.create_file_writer(summary_dir)
-
-    # Save the gin config.
-    write_gin_config(summary_writer, save_dir, trainer.step.numpy())
-  else:
-    # Need to create a dummy writer, even if no save_dir is provided.
-    summary_writer = tf.summary.create_noop_writer()
+  # if save_dir:
+  #   # Set up the summary writer and metrics.
+  #   summary_dir = os.path.join(save_dir, "summaries", "train")
+  #   summary_writer = tf.summary.create_file_writer(summary_dir)
+  #
+  #   # Save the gin config.
+  #   write_gin_config(summary_writer, save_dir, trainer.step.numpy())
+  # else:
+  #   # Need to create a dummy writer, even if no save_dir is provided.
+  #
+  summary_writer = tf.summary.create_noop_writer()
+  write_gin_config(summary_writer, save_dir, trainer.step.numpy())
 
   # Train.
   with summary_writer.as_default():
@@ -342,7 +356,8 @@ def train(
       if step % steps_per_summary == 0 and save_dir:
 
         def log_scalar(name, value):
-          tf.summary.scalar(name, value, step=step)
+          # TensorBoard logging unnecessary when we're using W&B
+          # tf.summary.scalar(name, value, step=step)
           wandb.log({name: value}, step=int(step.numpy()))
 
         if "z_std_raw" in outputs:
@@ -430,6 +445,5 @@ def evaluate(trainer: Trainer, dataset_iter, n_batches=50):
       avg_losses[k].update_state(v)
 
   avg_losses = {k: v.result() for k, v in avg_losses.items()}
-  print(avg_losses)
 
   return avg_losses
