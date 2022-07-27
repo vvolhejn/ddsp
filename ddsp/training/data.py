@@ -209,6 +209,7 @@ class TFRecordProvider(DataProvider):
           centered=False,
           with_jukebox=False,
           augment=False,
+          has_audio_16k=True,
   ):
     """RecordProvider constructor."""
     super().__init__(sample_rate, frame_rate)
@@ -221,6 +222,7 @@ class TFRecordProvider(DataProvider):
     self._with_jukebox = with_jukebox
     self._centered = centered
     self._augment = augment
+    self._has_audio_16k = has_audio_16k
 
     if self._file_pattern.endswith("eval*"):
       assert not augment, "Evaluation set should not use data augmentation"
@@ -239,6 +241,7 @@ class TFRecordProvider(DataProvider):
       frame_rate=self._frame_rate,
       centered=self._centered,
       with_jukebox=self._with_jukebox,
+      has_audio_16k=self._has_audio_16k,
       augment=False,  # We don't want data augmentation for the evaluation set.
     )
 
@@ -270,7 +273,12 @@ class TFRecordProvider(DataProvider):
     """
 
     def parse_tfexample(record):
-      return tf.io.parse_single_example(record, self.features_dict)
+      if self._has_audio_16k:
+        return tf.io.parse_single_example(record, self.features_dict)
+      else:
+        res = tf.io.parse_single_example(record, self.features_dict)
+        res["audio_16k"] = res["audio"]
+        return res
 
     filenames = tf.data.Dataset.list_files(self._file_pattern, shuffle=shuffle)
     dataset = filenames.interleave(
@@ -286,9 +294,6 @@ class TFRecordProvider(DataProvider):
     """Dictionary of features to read from dataset."""
     res = {
       "audio": tf.io.FixedLenFeature([self._audio_length], dtype=tf.float32),
-      "audio_16k": tf.io.FixedLenFeature(
-        [self._audio_16k_length], dtype=tf.float32
-      ),
       "f0_hz": tf.io.FixedLenFeature([self._feature_length], dtype=tf.float32),
       "f0_confidence": tf.io.FixedLenFeature(
         [self._feature_length], dtype=tf.float32
@@ -297,6 +302,11 @@ class TFRecordProvider(DataProvider):
         [self._feature_length], dtype=tf.float32
       ),
     }
+
+    if self._has_audio_16k:
+      res["audio_16k"] = tf.io.FixedLenFeature(
+        [self._audio_16k_length], dtype=tf.float32
+      )
 
     if self._with_jukebox:
       for i in range(jukebox.levels):
@@ -369,6 +379,8 @@ class WandbTFRecordProvider(TFRecordProvider):
     # Override with explicitly specified arguments
     for k, v in self._kwargs.items():
       args[k] = v
+
+    args["with_jukebox"] = False  # temporary hack while Jukebox is broken
 
     pattern = "*.tfrecord"
     if self._file_suffix:
