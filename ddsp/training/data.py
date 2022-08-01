@@ -272,10 +272,11 @@ class TFRecordProvider(DataProvider):
       dataset: A tf.dataset that reads from the TFRecord.
     """
 
-    def parse_tfexample(record):
-      if self._has_audio_16k:
+    if self._has_audio_16k:
+      def parse_tfexample(record):
         return tf.io.parse_single_example(record, self.features_dict)
-      else:
+    else:
+      def parse_tfexample(record):
         res = tf.io.parse_single_example(record, self.features_dict)
         res["audio_16k"] = res["audio"]
         return res
