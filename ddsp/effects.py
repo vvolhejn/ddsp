@@ -32,6 +32,7 @@ class Reverb(processors.Processor):
                trainable=False,
                reverb_length=48000,
                add_dry=True,
+               decay_after=None,
                name='reverb'):
     """Takes neural network outputs directly as the impulse response.
 
@@ -46,6 +47,7 @@ class Reverb(processors.Processor):
     super().__init__(name=name, trainable=trainable)
     self._reverb_length = reverb_length
     self._add_dry = add_dry
+    self._decay_after = decay_after
 
   def _mask_dry_ir(self, ir):
     """Set first impulse response to zero to mask the dry signal."""
@@ -113,6 +115,16 @@ class Reverb(processors.Processor):
     """
     audio, ir = tf_float32(audio), tf_float32(ir)
     ir = self._mask_dry_ir(ir)
+
+    if self._decay_after is not None:
+      decay_coef = tf.exp(
+        -4.0 * tf.math.maximum(
+          0.0,
+          tf.range(self._reverb_length, dtype=tf.float32) - self._decay_after
+        ).astype(tf.float32)
+      )
+      ir = ir * decay_coef
+
     wet = core.fft_convolve(audio, ir, padding='same', delay_compensation=0)
     return (wet + audio) if self._add_dry else wet
 

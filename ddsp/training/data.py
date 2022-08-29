@@ -350,10 +350,15 @@ class WandbTFRecordProvider(TFRecordProvider):
     self._file_suffix = file_suffix
     self._kwargs = kwargs
     self._initialized = False
+    self._artifact_dir = None
 
   def get_dataset(self, shuffle=True):
     self._init()
     return super().get_dataset(shuffle)
+
+  def get_artifact_dir(self):
+    self._init()
+    return self._artifact_dir
 
   def get_evaluation_set(self):
     self._init()
@@ -367,6 +372,7 @@ class WandbTFRecordProvider(TFRecordProvider):
     artifact = wandb.run.use_artifact(self._artifact_name, type="dataset")
     artifact_dir = artifact.download()
     assert str(artifact_dir) != '', "Dataset was not downloaded from W&B, is W&B enabled?"
+    self._artifact_dir = artifact_dir
 
     provider_keys = [
       "example_secs",

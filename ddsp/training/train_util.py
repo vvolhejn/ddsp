@@ -303,6 +303,7 @@ def train(
                          dir="/cluster/scratch/vvolhejn/wandb",
                          tags=["train", dataset_name],
                          settings=wandb.Settings(start_method="fork"),
+                         notes=make_wandb_notes()
                          )
 
   # Load latest checkpoint if one exists in load directory.
@@ -447,3 +448,29 @@ def evaluate(trainer: Trainer, dataset_iter, n_batches=50):
   avg_losses = {k: v.result() for k, v in avg_losses.items()}
 
   return avg_losses
+
+
+def make_wandb_notes():
+  notes = []
+  try:
+    bindings = gin.get_bindings("CustomDilatedConvDecoder")
+  except ValueError:
+    # Not a CustomDilatedConvDecoder
+    return ""
+
+  if bindings.get("use_inverted_bottleneck") == True:
+    notes.append("ib")
+
+  ch = bindings.get("ch")
+  if ch is not None and ch != 128:
+    notes.append(f"ch={ch}")
+
+  stacks = bindings.get("stacks")
+  if stacks is not None and stacks != 2:
+    notes.append(f"st={stacks}")
+
+  lps = bindings.get("layers_per_stack")
+  if lps is not None and lps != 3:
+    notes.append(f"lps={lps}")
+
+  return ", ".join(notes)

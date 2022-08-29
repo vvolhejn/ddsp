@@ -160,7 +160,7 @@ def spectrogram_array_summary(
     fig_summary(name, fig, step)
 
 
-def audio_summary(audio, step, sample_rate=16000, name="audio"):
+def audio_summary(audio, step, sample_rate=16000, name="audio", include_wandb_step=True):
     """Update metrics dictionary given a batch of audio."""
     # Ensure there is a single channel dimension.
     batch_size = int(audio.shape[0])
@@ -174,7 +174,7 @@ def audio_summary(audio, step, sample_rate=16000, name="audio"):
     # from the batch.
     wandb.log(
         {name: wandb.Audio(audio[0], sample_rate=sample_rate)},
-        step=step,
+        step=step if include_wandb_step else None,
     )
 
 
